@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Puzzle Builder</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>DuoTang</h1>
+            <p class="subtitle">Puzzle Builder</p>
+        </header>
+
+        <main>
+            <section id="puzzle-config">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h2 style="margin: 0;">Puzzle Stages</h2>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button id="btn-toggle-filters" class="btn btn-secondary" onclick="toggleGlobalFilters()">🔍 Filters</button>
+                        <button id="btn-add-stage" class="btn btn-primary">+ Add Stage</button>
+                    </div>
+                </div>
+
+                <div id="global-filters" style="display: none; margin-bottom: 16px; padding: 12px; background: #fdf6e3; border: 3px solid var(--saffron); border-radius: 15px;">
+                    <div style="font-size: 13px; font-weight: 700; margin-bottom: 8px; color: var(--charcoal);">Filters (apply to all suggestions)</div>
+                    <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px; max-width: 400px;">
+                        <div style="flex: 1;">
+                            <label style="font-size: 12px; color: var(--charcoal); font-weight: 600;">Min Length:</label>
+                            <input type="number" id="global-min-length" value="2" min="1" max="20"
+                                style="width: 100%; padding: 6px 8px; font-size: 13px; border: 3px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="font-size: 12px; color: var(--charcoal); font-weight: 600;">Max Length:</label>
+                            <input type="number" id="global-max-length" value="7" min="1" max="20"
+                                style="width: 100%; padding: 6px 8px; font-size: 13px; border: 3px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
+                        </div>
+                    </div>
+                    <div style="max-width: 600px;">
+                        <label style="font-size: 12px; color: var(--charcoal); font-weight: 600;">Ignore Words (comma-separated):</label>
+                        <input type="text" id="global-ignore-words" placeholder="e.g., the, and, but"
+                            style="width: 100%; padding: 6px 8px; font-size: 13px; border: 3px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
+                        <div style="font-size: 11px; color: #666; margin-top: 4px;">These words will be excluded from all suggestions</div>
+                    </div>
+                </div>
+
+                <div id="puzzle-builder">
+                    <!-- Dynamically populated stages will go here -->
+                </div>
+
+                <div id="puzzle-summary" class="summary-panel" style="display: none;">
+                    <h3>Puzzle Summary</h3>
+                    <div id="summary-content"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="words.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
