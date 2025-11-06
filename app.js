@@ -64,13 +64,14 @@ function findAnagrams(letters, exactMatch = false) {
     return results;
 }
 
-function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false) {
+async function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false, progressCallback = null) {
     const combinations = [];
     const targetLen = targetWord.length;
 
     // If we have available letters from previous stage, check if they alone can make the target
     if (availableLetters && canMakeWord(targetWord, availableLetters)) {
         combinations.push({words: [], complete: true});  // Empty array means "use available letters only"
+        if (progressCallback) progressCallback([...combinations]);
     }
 
     // Get ignored words from global filter
@@ -151,6 +152,8 @@ function findWordCombinations(targetWord, availableLetters = '', minWords = 1, m
     if (minWords <= 2 && maxWords >= 2) {
         // Search through all relevant words for complete coverage
         const searchWords = shuffled;
+        let iterationCount = 0;
+        let lastUpdate = 0;
 
         for (let i = 0; i < searchWords.length; i++) {
             const word1 = searchWords[i];
@@ -162,9 +165,22 @@ function findWordCombinations(targetWord, availableLetters = '', minWords = 1, m
                     if (canMakeWord(targetWord, combined)) {
                         combinations.push({words: [word1, word2], complete: true});
                         if (combinations.length >= 2000) {
+                            if (progressCallback) progressCallback([...combinations]);
                             return combinations;
                         }
+
+                        // Send progress update every 50 new combinations
+                        if (progressCallback && combinations.length - lastUpdate >= 50) {
+                            progressCallback([...combinations]);
+                            lastUpdate = combinations.length;
+                        }
                     }
+                }
+
+                // Yield to browser every 1000 iterations to keep UI responsive
+                iterationCount++;
+                if (iterationCount % 1000 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
                 }
             }
         }
@@ -331,6 +347,7 @@ function createStageElement(stage, index) {
                 value="${stage.targetWord}"
                 placeholder="Target word ${index + 1}"
                 onblur="updateTargetWord(${index}, this.value)"
+                onkeypress="handleTargetInput(event, ${index})"
                 onkeyup="checkTargetWordSpelling(${index})"
                 style="flex: 1; padding: 8px 12px; font-size: 15px; border: 2px solid ${stage.targetWord && !WORD_SET.has(stage.targetWord) ? '#ffc107' : '#e0e0e0'}; border-radius: 4px;"
             >
@@ -393,7 +410,7 @@ function createStageElement(stage, index) {
                     </div>
                 ` : ''}
 
-                <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                <div style="display: flex; gap: 4px; margin-bottom: 4px; align-items: center;">
                     <input
                         type="text"
                         id="source-input-${index}"
@@ -403,6 +420,7 @@ function createStageElement(stage, index) {
                         style="flex: 1; padding: 6px 10px; font-size: 13px; border: 2px solid #e0e0e0; border-radius: 4px;"
                     >
                     <button class="btn btn-secondary btn-small" onclick="addSourceWord(${index})" style="padding: 6px 10px; font-size: 13px;">Add</button>
+                    <span style="font-size: 11px; color: #666; font-weight: 600; margin-left: 4px;">Suggest:</span>
                     <button class="btn btn-secondary btn-small" onclick="showSuggestions(${index}, 'single')" style="padding: 6px 10px; font-size: 13px;">Word</button>
                     <button class="btn btn-secondary btn-small" onclick="showSuggestions(${index}, 'combo')" style="padding: 6px 10px; font-size: 13px;">Combo</button>
                 </div>
@@ -534,6 +552,14 @@ function handleDragEnd(e) {
     document.querySelectorAll('.stage').forEach(stage => {
         stage.classList.remove('drag-over');
     });
+}
+
+function handleTargetInput(event, stageIndex) {
+    if (event.key === 'Enter') {
+        const input = document.getElementById(`target-input-${stageIndex}`);
+        updateTargetWord(stageIndex, input.value);
+        input.blur(); // Remove focus from input
+    }
 }
 
 function handleSourceInput(event, stageIndex) {
@@ -696,7 +722,7 @@ function sortByBestMatch(combinations, targetWord, existingLetters) {
     return scored.map(item => item.combo);
 }
 
-function showSuggestions(stageIndex, mode = 'single') {
+async function showSuggestions(stageIndex, mode = 'single') {
     const stage = stages[stageIndex];
     const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
     const listDiv = document.getElementById(`suggestions-list-${stageIndex}`);
@@ -706,7 +732,7 @@ function showSuggestions(stageIndex, mode = 'single') {
     listDiv.innerHTML = `<p style="padding: 12px; color: #666;">${searchText} (this may take a moment)</p>`;
 
     // Use setTimeout to allow UI to update
-    setTimeout(() => {
+    setTimeout(async () => {
         // Get available letters from previous stage (if not first stage)
         const availableLetters = stage.letterPool || '';
 
@@ -734,7 +760,33 @@ function showSuggestions(stageIndex, mode = 'single') {
         const incompleteToggle = document.getElementById(`incomplete-toggle-${stageIndex}`);
         const includeIncomplete = mode === 'single' && incompleteToggle && incompleteToggle.checked;
 
-        const combinations = findWordCombinations(stage.targetWord, allExistingLetters, minWords, maxWords, minLength, maxLength, includeIncomplete);
+        // Set default sort based on mode: on for 'single', off for 'combo'
+        const defaultSort = mode === 'single';
+        const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
+        if (sortToggle) {
+            sortToggle.checked = defaultSort;
+        }
+
+        stage.currentMode = mode;
+        stage.searchInProgress = true;
+
+        // Progress callback to render results as they're found
+        const progressCallback = (currentCombinations) => {
+            if (currentCombinations.length === 0) return;
+
+            // Store both sorted and unsorted versions
+            stage.unsortedCombinations = currentCombinations;
+            stage.sortedCombinations = sortByBestMatch(currentCombinations, stage.targetWord, allExistingLetters);
+
+            stage.currentCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
+            stage.combinationsShown = 0;
+
+            renderSuggestions(stageIndex, mode);
+        };
+
+        const combinations = await findWordCombinations(stage.targetWord, allExistingLetters, minWords, maxWords, minLength, maxLength, includeIncomplete, progressCallback);
+
+        stage.searchInProgress = false;
 
         if (combinations.length === 0) {
             const message = mode === 'single'
@@ -744,18 +796,9 @@ function showSuggestions(stageIndex, mode = 'single') {
             return;
         }
 
-        // Store both sorted and unsorted versions
+        // Final update with all combinations
         stage.unsortedCombinations = combinations;
         stage.sortedCombinations = sortByBestMatch(combinations, stage.targetWord, allExistingLetters);
-        stage.currentMode = mode;
-
-        // Set default sort based on mode: on for 'single', off for 'combo'
-        const defaultSort = mode === 'single';
-        const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
-        if (sortToggle) {
-            sortToggle.checked = defaultSort;
-        }
-
         stage.currentCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
         stage.combinationsShown = 0;
 
@@ -835,17 +878,17 @@ function renderSuggestions(stageIndex, mode) {
     }).join('');
 
     const hasMore = endIndex < combinations.length;
-    const countText = `Showing ${endIndex} of ${combinations.length} ${mode === 'single' ? 'words' : 'combinations'}`;
+    const countText = `Showing ${endIndex} of ${combinations.length}${stage.searchInProgress ? '+' : ''} ${mode === 'single' ? 'words' : 'combinations'}`;
 
     if (startIndex === 0) {
         // First render
         listDiv.innerHTML = `
             <p style="padding: 8px; color: var(--charcoal); font-weight: 600; font-size: 11px; background: #e8f4f2; border-radius: 8px; margin-bottom: 8px;">${headerText}</p>
             <div id="suggestions-items-${stageIndex}" style="display: contents;">${itemsHTML}</div>
-            ${hasMore ? `
+            ${hasMore || stage.searchInProgress ? `
                 <div id="load-more-container-${stageIndex}" style="grid-column: 1/-1; margin-top: 8px; text-align: center;">
-                    <p style="font-size: 11px; color: #666; margin-bottom: 8px;">${countText}</p>
-                    <button class="btn btn-secondary btn-small" onclick="loadMoreSuggestions(${stageIndex}, '${mode}')" style="padding: 6px 16px;">Load More</button>
+                    <p style="font-size: 11px; color: #666; margin-bottom: 8px;">${countText}${stage.searchInProgress ? ' (finding more...)' : ''}</p>
+                    ${hasMore && !stage.searchInProgress ? `<button class="btn btn-secondary btn-small" onclick="loadMoreSuggestions(${stageIndex}, '${mode}')" style="padding: 6px 16px;">Load More</button>` : ''}
                 </div>
             ` : `
                 <p style="grid-column: 1/-1; margin-top: 8px; font-size: 11px; color: #666; text-align: center;">${countText}</p>
@@ -875,24 +918,30 @@ function toggleSort(stageIndex) {
     const stage = stages[stageIndex];
     const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
 
-    // Switch between sorted and unsorted
-    if (sortToggle.checked) {
-        stage.currentCombinations = stage.sortedCombinations;
-    } else {
-        stage.currentCombinations = stage.unsortedCombinations;
+    // Only refresh if suggestions are currently visible
+    const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
+    if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
+        // Switch between sorted and unsorted
+        if (sortToggle.checked) {
+            stage.currentCombinations = stage.sortedCombinations;
+        } else {
+            stage.currentCombinations = stage.unsortedCombinations;
+        }
+
+        // Reset to show from the beginning
+        stage.combinationsShown = 0;
+
+        // Re-render with the new order
+        renderSuggestions(stageIndex, stage.currentMode);
     }
-
-    // Reset to show from the beginning
-    stage.combinationsShown = 0;
-
-    // Re-render with the new order
-    renderSuggestions(stageIndex, stage.currentMode);
 }
 
 function toggleIncomplete(stageIndex) {
-    // Re-run the suggestions with the new incomplete setting
+    // Only refresh if suggestions are currently visible
     const stage = stages[stageIndex];
-    if (stage.currentMode) {
+    const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
+    if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
+        // Re-run the suggestions with the new incomplete setting
         showSuggestions(stageIndex, stage.currentMode);
     }
 }
