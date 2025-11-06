@@ -744,7 +744,7 @@ async function showSuggestions(stageIndex, mode = 'single') {
         const minLengthInput = document.getElementById('global-min-length');
         const maxLengthInput = document.getElementById('global-max-length');
         const minLength = minLengthInput ? parseInt(minLengthInput.value) || 2 : 2;
-        const maxLength = maxLengthInput ? parseInt(maxLengthInput.value) || 7 : 7;
+        const maxLength = maxLengthInput ? parseInt(maxLengthInput.value) || 10 : 10;
 
         // Set min/max words based on mode
         let minWords, maxWords;
