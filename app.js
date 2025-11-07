@@ -132,17 +132,19 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
     const shuffled = [...relevantWords].sort(() => Math.random() - 0.5);
 
     // Find single words that, combined with available letters, make the target
-    if (minWords <= 1 && (availableLetters || includeIncomplete)) {
+    if (minWords <= 1) {
         for (const word of shuffled) {
             const combined = availableLetters + word;
             const isComplete = combined.length >= targetLen && canMakeWord(targetWord, combined);
 
             if (isComplete) {
                 combinations.push({words: [word], complete: true});
+                if (progressCallback) progressCallback([...combinations]);
                 if (combinations.length >= 200) return combinations;
             } else if (includeIncomplete) {
                 // Include incomplete words if the option is enabled
                 combinations.push({words: [word], complete: false});
+                if (progressCallback && combinations.length % 50 === 0) progressCallback([...combinations]);
                 if (combinations.length >= 200) return combinations;
             }
         }
