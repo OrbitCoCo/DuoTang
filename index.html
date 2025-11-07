@@ -37,11 +37,18 @@
                                 style="width: 100%; padding: 6px 8px; font-size: 13px; border: 3px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
                         </div>
                     </div>
-                    <div style="max-width: 600px;">
+                    <div style="max-width: 600px; margin-bottom: 12px;">
                         <label style="font-size: 12px; color: var(--charcoal); font-weight: 600;">Ignore Words (comma-separated):</label>
                         <input type="text" id="global-ignore-words" placeholder="e.g., the, and, but"
                             style="width: 100%; padding: 6px 8px; font-size: 13px; border: 3px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
                         <div style="font-size: 11px; color: #666; margin-top: 4px;">These words will be excluded from all suggestions</div>
+                    </div>
+                    <div style="max-width: 600px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--charcoal); font-weight: 600; cursor: pointer;">
+                            <input type="checkbox" id="use-expanded-wordlist" onchange="toggleWordList()" style="cursor: pointer;">
+                            <span>Use Expanded Word List (~6,800 words)</span>
+                        </label>
+                        <div style="font-size: 11px; color: #666; margin-top: 4px; margin-left: 24px;">Includes abstract nouns and less common words. Default uses filtered list (~5,600 concrete nouns).</div>
                     </div>
                 </div>
 

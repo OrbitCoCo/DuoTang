@@ -47,7 +47,7 @@ function findAnagrams(letters, exactMatch = false) {
     const results = [];
     const letterCounts = getLetterCounts(letters);
 
-    for (const word of WORD_LIST) {
+    for (const word of currentWordList) {
         if (exactMatch) {
             // For exact match, all letters must be used
             if (sortString(word) === sortString(letters)) {
@@ -99,7 +99,7 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
 
     // Filter words based on what we need
     const targetLower = targetWord.toLowerCase();
-    const relevantWords = WORD_LIST.filter(w => {
+    const relevantWords = currentWordList.filter(w => {
         // Apply user-defined length filter
         if (w.length < minLength || w.length > maxLength) return false;
         // Exclude target word itself
@@ -358,13 +358,13 @@ function createStageElement(stage, index) {
                 onblur="updateTargetWord(${index}, this.value)"
                 onkeypress="handleTargetInput(event, ${index})"
                 onkeyup="checkTargetWordSpelling(${index})"
-                style="flex: 1; padding: 8px 12px; font-size: 15px; border: 2px solid ${stage.targetWord && !WORD_SET.has(stage.targetWord) ? '#ffc107' : '#e0e0e0'}; border-radius: 4px;"
+                style="flex: 1; padding: 8px 12px; font-size: 15px; border: 2px solid ${stage.targetWord && !currentWordSet.has(stage.targetWord) ? '#ffc107' : '#e0e0e0'}; border-radius: 4px;"
             >
             <span class="stage-status ${statusClass}" style="font-size: 12px;">${index + 1}</span>
             <button class="btn btn-secondary btn-small" onclick="removeStage(${index})" title="Remove stage" style="padding: 4px 8px;">✕</button>
         </div>
         <div id="target-spell-check-${index}" style="margin-bottom: 8px; font-size: 12px;">
-            ${stage.targetWord && !WORD_SET.has(stage.targetWord) ? `
+            ${stage.targetWord && !currentWordSet.has(stage.targetWord) ? `
                 <span style="color: #856404;">⚠️ Not in dictionary</span>
             ` : ''}
         </div>
@@ -411,8 +411,8 @@ function createStageElement(stage, index) {
                 ${stage.sourceWords.length > 0 ? `
                     <div class="selected-source-tags" id="selected-tags-${index}" style="margin-bottom: 8px;">
                         ${stage.sourceWords.map(w => `
-                            <div class="source-tag" style="background: ${WORD_SET.has(w) ? '#667eea' : '#ffc107'}; color: ${WORD_SET.has(w) ? 'white' : '#333'}; padding: 4px 10px; font-size: 13px;">
-                                ${!WORD_SET.has(w) ? '⚠️ ' : ''}${w}
+                            <div class="source-tag" style="background: ${currentWordSet.has(w) ? '#667eea' : '#ffc107'}; color: ${currentWordSet.has(w) ? 'white' : '#333'}; padding: 4px 10px; font-size: 13px;">
+                                ${!currentWordSet.has(w) ? '⚠️ ' : ''}${w}
                                 <span class="remove" onclick="removeSourceWord(${index}, '${w}')">&times;</span>
                             </div>
                         `).join('')}
@@ -598,7 +598,7 @@ function checkTargetWordSpelling(stageIndex) {
         return;
     }
 
-    if (!WORD_SET.has(word)) {
+    if (!currentWordSet.has(word)) {
         checkDiv.innerHTML = '<span style="color: #856404;">⚠️ Word not found in dictionary (can still use it)</span>';
         input.style.borderColor = '#ffc107';
     } else {
@@ -617,7 +617,7 @@ function checkSourceWordSpelling(stageIndex) {
         return;
     }
 
-    if (!WORD_SET.has(word)) {
+    if (!currentWordSet.has(word)) {
         checkDiv.innerHTML = '<span style="color: #856404;">⚠️ Word not found in dictionary (can still add it)</span>';
     } else {
         checkDiv.innerHTML = '<span style="color: #28a745;">✓ Word found in dictionary</span>';
@@ -1343,4 +1343,40 @@ function startOver() {
 
         renderPuzzleBuilder();
     }
+}
+
+function toggleWordList() {
+    const checkbox = document.getElementById('use-expanded-wordlist');
+    const useExpanded = checkbox.checked;
+
+    // Switch to expanded or filtered word list
+    useExpandedWordList(useExpanded);
+
+    // Refresh all visible suggestions
+    stages.forEach((stage, index) => {
+        const suggestionsDiv = document.getElementById(`suggestions-${index}`);
+
+        // If suggestions are currently visible, refresh them
+        if (suggestionsDiv && suggestionsDiv.style.display !== 'none') {
+            // Clear cached combinations since word list changed
+            stage.sortedCombinations = null;
+            stage.unsortedCombinations = null;
+            stage.currentCombinations = null;
+            stage.combinationsShown = 0;
+
+            // Re-trigger the search with current mode
+            if (stage.currentMode) {
+                if (stage.currentMode === 'single') {
+                    showSuggestions(index, 'single');
+                } else if (stage.currentMode === 'combo') {
+                    showSuggestions(index, 'combo');
+                }
+            }
+        }
+    });
+
+    // Show notification
+    const wordCount = useExpanded ? '~6,800' : '~5,600';
+    const listType = useExpanded ? 'expanded' : 'filtered';
+    console.log(`Switched to ${listType} word list (${wordCount} words)`);
 }
