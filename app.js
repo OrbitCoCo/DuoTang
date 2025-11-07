@@ -500,7 +500,7 @@ function createStageElement(stage, index) {
 
         ${stage.targetWord && (stage.isFirst || stages[index - 1].complete) ? `
             <div style="margin-bottom: 12px;">
-                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Missing letters:</div>
+                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Missing letters: <span style="font-size: 11px; color: #999;">(click to add as word)</span></div>
                 <div class="letters" id="missing-letters-${index}">
                     ${(() => {
                         const availableLetters = stage.letterPool || '';
@@ -516,7 +516,7 @@ function createStageElement(stage, index) {
                             const missing = count - available;
                             if (missing > 0) {
                                 for (let i = 0; i < missing; i++) {
-                                    missingHTML += `<span class="letter-tile" style="background: var(--sandy-brown); border-color: #d88a4d; box-shadow: 0 4px 0 #c07640;">${letter.toUpperCase()}</span>`;
+                                    missingHTML += `<span class="letter-tile" style="background: var(--sandy-brown); border-color: #d88a4d; box-shadow: 0 4px 0 #c07640; cursor: pointer;" onclick="addMissingLettersAsWord(${index}, '${letter}')" title="Click to add '${letter}' as a word">${letter.toUpperCase()}</span>`;
                                 }
                             }
                         }
@@ -566,6 +566,10 @@ function createStageElement(stage, index) {
                             <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; cursor: pointer;">
                                 <input type="checkbox" id="exact-match-toggle-${index}" onchange="toggleExactMatch(${index})" style="cursor: pointer;">
                                 <span>Exact Matches Only</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; cursor: pointer;">
+                                <input type="checkbox" id="no-excess-toggle-${index}" checked onchange="toggleNoExcess(${index})" style="cursor: pointer;">
+                                <span>No Excess (Red) Letters</span>
                             </label>
                             <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; cursor: pointer;">
                                 <input type="checkbox" id="sort-toggle-${index}" checked onchange="toggleSort(${index})" style="cursor: pointer;">
@@ -770,6 +774,19 @@ function addSourceWord(stageIndex) {
     autoValidateStage(stageIndex);
 }
 
+function addMissingLettersAsWord(stageIndex, letters) {
+    if (!letters) return;
+
+    const word = letters.toLowerCase();
+
+    // Allow duplicate letters to be added (you might need multiple of the same letter)
+    stages[stageIndex].sourceWords.push(word);
+    renderPuzzleBuilder();
+
+    // Auto-validate after adding word
+    autoValidateStage(stageIndex);
+}
+
 function removeSourceWord(stageIndex, word) {
     stages[stageIndex].sourceWords = stages[stageIndex].sourceWords.filter(w => w !== word);
     renderPuzzleBuilder();
@@ -951,27 +968,48 @@ async function showSuggestions(stageIndex, mode = 'single') {
             stage.unsortedCombinations = currentCombinations;
             stage.sortedCombinations = sortByBestMatch(currentCombinations, stage.targetWord, allExistingLetters, stageIndex);
 
-            // Apply exact match filter if enabled
+            // Apply filters
+            const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
             const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
+            const noExcessToggle = document.getElementById(`no-excess-toggle-${stageIndex}`);
+
             let finalCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
 
-            if (exactMatchToggle && exactMatchToggle.checked) {
-                const targetCounts = getLetterCounts(stage.targetWord);
-                finalCombinations = finalCombinations.filter(comboObj => {
-                    const comboLetters = comboObj.words.join('');
-                    const allLetters = allExistingLetters + comboLetters;
-                    const allCounts = getLetterCounts(allLetters);
+            const targetCounts = getLetterCounts(stage.targetWord);
+            const futureLetters = new Set();
+            for (let i = stageIndex + 1; i < stages.length; i++) {
+                if (stages[i].targetWord) {
+                    stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
+                }
+            }
+            const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
 
-                    // Check if there are any excess letters
+            finalCombinations = finalCombinations.filter(comboObj => {
+                const comboLetters = comboObj.words.join('');
+                const allLetters = allExistingLetters + comboLetters;
+                const allCounts = getLetterCounts(allLetters);
+
+                // Exact match filter
+                if (exactMatchToggle && exactMatchToggle.checked) {
                     for (const [letter, count] of Object.entries(allCounts)) {
                         const needed = targetCounts[letter] || 0;
                         if (count > needed) {
-                            return false; // Has excess letters
+                            return false;
                         }
                     }
-                    return true; // No excess letters - exact match
-                });
-            }
+                }
+
+                // No excess filter
+                if (noExcessToggle && noExcessToggle.checked) {
+                    for (const letter of comboLetters.toLowerCase()) {
+                        if (!targetLetters.has(letter) && !futureLetters.has(letter)) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            });
 
             stage.currentCombinations = finalCombinations;
             stage.combinationsShown = 0;
@@ -995,27 +1033,46 @@ async function showSuggestions(stageIndex, mode = 'single') {
         stage.unsortedCombinations = combinations;
         stage.sortedCombinations = sortByBestMatch(combinations, stage.targetWord, allExistingLetters, stageIndex);
 
-        // Apply exact match filter if enabled
+        // Apply filters
         const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
+        const noExcessToggle = document.getElementById(`no-excess-toggle-${stageIndex}`);
         let finalCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
 
-        if (exactMatchToggle && exactMatchToggle.checked) {
-            const targetCounts = getLetterCounts(stage.targetWord);
-            finalCombinations = finalCombinations.filter(comboObj => {
-                const comboLetters = comboObj.words.join('');
-                const allLetters = allExistingLetters + comboLetters;
-                const allCounts = getLetterCounts(allLetters);
+        const targetCounts = getLetterCounts(stage.targetWord);
+        const futureLetters = new Set();
+        for (let i = stageIndex + 1; i < stages.length; i++) {
+            if (stages[i].targetWord) {
+                stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
+            }
+        }
+        const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
 
-                // Check if there are any excess letters
+        finalCombinations = finalCombinations.filter(comboObj => {
+            const comboLetters = comboObj.words.join('');
+            const allLetters = allExistingLetters + comboLetters;
+            const allCounts = getLetterCounts(allLetters);
+
+            // Exact match filter
+            if (exactMatchToggle && exactMatchToggle.checked) {
                 for (const [letter, count] of Object.entries(allCounts)) {
                     const needed = targetCounts[letter] || 0;
                     if (count > needed) {
-                        return false; // Has excess letters
+                        return false;
                     }
                 }
-                return true; // No excess letters - exact match
-            });
-        }
+            }
+
+            // No excess filter
+            if (noExcessToggle && noExcessToggle.checked) {
+                for (const letter of comboLetters.toLowerCase()) {
+                    if (!targetLetters.has(letter) && !futureLetters.has(letter)) {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        });
 
         stage.currentCombinations = finalCombinations;
         stage.combinationsShown = 0;
@@ -1152,52 +1209,7 @@ function loadMoreSuggestions(stageIndex, mode) {
 }
 
 function toggleSort(stageIndex) {
-    const stage = stages[stageIndex];
-    const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
-    const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
-
-    // Only refresh if suggestions are currently visible
-    const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
-    if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
-        // Switch between sorted and unsorted
-        let baseSource;
-        if (sortToggle.checked) {
-            baseSource = stage.sortedCombinations;
-        } else {
-            baseSource = stage.unsortedCombinations;
-        }
-
-        // Apply exact match filter if enabled
-        if (exactMatchToggle && exactMatchToggle.checked) {
-            const existingWords = stage.sourceWords.join('');
-            const availableLetters = stage.letterPool || '';
-            const allExistingLetters = availableLetters + existingWords;
-            const targetCounts = getLetterCounts(stage.targetWord);
-
-            stage.currentCombinations = baseSource.filter(comboObj => {
-                const comboLetters = comboObj.words.join('');
-                const allLetters = allExistingLetters + comboLetters;
-                const allCounts = getLetterCounts(allLetters);
-
-                // Check if there are any excess letters
-                for (const [letter, count] of Object.entries(allCounts)) {
-                    const needed = targetCounts[letter] || 0;
-                    if (count > needed) {
-                        return false; // Has excess letters
-                    }
-                }
-                return true; // No excess letters - exact match
-            });
-        } else {
-            stage.currentCombinations = baseSource;
-        }
-
-        // Reset to show from the beginning
-        stage.combinationsShown = 0;
-
-        // Re-render with the new order
-        renderSuggestions(stageIndex, stage.currentMode);
-    }
+    applyFilters(stageIndex);
 }
 
 function toggleIncomplete(stageIndex) {
@@ -1211,39 +1223,65 @@ function toggleIncomplete(stageIndex) {
 }
 
 function toggleExactMatch(stageIndex) {
+    applyFilters(stageIndex);
+}
+
+function toggleNoExcess(stageIndex) {
+    applyFilters(stageIndex);
+}
+
+function applyFilters(stageIndex) {
     const stage = stages[stageIndex];
-    const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
     const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
 
     if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
         const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
+        const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
+        const noExcessToggle = document.getElementById(`no-excess-toggle-${stageIndex}`);
+
         const baseSource = sortToggle.checked ? stage.sortedCombinations : stage.unsortedCombinations;
 
-        if (exactMatchToggle.checked) {
-            // Filter to only show exact matches (no excess letters)
-            const existingWords = stage.sourceWords.join('');
-            const availableLetters = stage.letterPool || '';
-            const allExistingLetters = availableLetters + existingWords;
-            const targetCounts = getLetterCounts(stage.targetWord);
+        const existingWords = stage.sourceWords.join('');
+        const availableLetters = stage.letterPool || '';
+        const allExistingLetters = availableLetters + existingWords;
+        const targetCounts = getLetterCounts(stage.targetWord);
 
-            stage.currentCombinations = baseSource.filter(comboObj => {
-                const comboLetters = comboObj.words.join('');
-                const allLetters = allExistingLetters + comboLetters;
-                const allCounts = getLetterCounts(allLetters);
+        // Get future target letters for no-excess filter
+        const futureLetters = new Set();
+        for (let i = stageIndex + 1; i < stages.length; i++) {
+            if (stages[i].targetWord) {
+                stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
+            }
+        }
+        const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
 
-                // Check if there are any excess letters
+        // Apply both filters
+        stage.currentCombinations = baseSource.filter(comboObj => {
+            const comboLetters = comboObj.words.join('');
+            const allLetters = allExistingLetters + comboLetters;
+            const allCounts = getLetterCounts(allLetters);
+
+            // Exact match filter: no excess letters at all
+            if (exactMatchToggle && exactMatchToggle.checked) {
                 for (const [letter, count] of Object.entries(allCounts)) {
                     const needed = targetCounts[letter] || 0;
                     if (count > needed) {
                         return false; // Has excess letters
                     }
                 }
-                return true; // No excess letters - exact match
-            });
-        } else {
-            // Show all combinations
-            stage.currentCombinations = baseSource;
-        }
+            }
+
+            // No excess filter: no letters that would be red (not in current or future targets)
+            if (noExcessToggle && noExcessToggle.checked) {
+                for (const letter of comboLetters.toLowerCase()) {
+                    if (!targetLetters.has(letter) && !futureLetters.has(letter)) {
+                        return false; // Has red (unneeded) letter
+                    }
+                }
+            }
+
+            return true;
+        });
 
         // Reset to show from the beginning
         stage.combinationsShown = 0;
