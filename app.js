@@ -1740,6 +1740,7 @@ class PuzzleAutoSolver {
         this.memo = new Map();
         this.candidateCache = new Map();
         this.futureNeeds = this.computeFutureNeeds();
+        this.stageTargetCounts = stageData.map(data => data.targetCounts || getLetterCountsArray(data.targetWord));
         this.nodesExplored = 0;
         this.bestPartial = null;
     }
@@ -1832,7 +1833,7 @@ class PuzzleAutoSolver {
         const candidatePromise = (async () => {
             const stage = this.stageData[index];
             const availableCounts = getLetterCountsArray(availableLetters);
-            const targetCounts = getLetterCountsArray(stage.targetWord);
+            const targetCounts = this.stageTargetCounts[index];
             const combos = await findWordCombinations(
                 stage.targetWord,
                 availableLetters,
@@ -1868,6 +1869,10 @@ class PuzzleAutoSolver {
                 }
 
                 const remainingCounts = subtractCountsToPositive(poolCounts, targetCounts);
+
+                if (!this.isRemainingAllowed(index, remainingCounts)) {
+                    return;
+                }
                 const remainingLetters = countsArrayToString(remainingCounts);
 
                 if (this.config.maxCarryoverLetters && remainingLetters.length > this.config.maxCarryoverLetters) {
@@ -1926,6 +1931,20 @@ class PuzzleAutoSolver {
         return randomLetterCount * 1000 + wasted * 50 + totalRemaining;
     }
 
+    isRemainingAllowed(index, remainingCounts) {
+        const targetCounts = this.stageTargetCounts[index];
+        const futureCounts = this.futureNeeds[index];
+        for (let i = 0; i < 26; i++) {
+            if (!remainingCounts[i]) continue;
+            const targetHasLetter = targetCounts[i] > 0;
+            const futureNeedsLetter = futureCounts ? futureCounts[i] > 0 : false;
+            if (!targetHasLetter && !futureNeedsLetter) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     updateBestPartial(path, remainingLetters) {
         if (path.length !== this.stageData.length) return;
         if (this.bestPartial && remainingLetters.length >= this.bestPartial.remainingLetters.length) {
@@ -1967,9 +1986,13 @@ async function autoGeneratePuzzle() {
         stage.randomLetters = '';
     });
 
-    const stageData = stages.map(stage => ({
-        targetWord: stage.targetWord.trim().toLowerCase()
-    }));
+    const stageData = stages.map(stage => {
+        const targetWord = stage.targetWord.trim().toLowerCase();
+        return {
+            targetWord,
+            targetCounts: getLetterCountsArray(targetWord)
+        };
+    });
 
     const solver = new PuzzleAutoSolver(stageData);
     const result = await solver.solve();
