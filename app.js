@@ -571,7 +571,7 @@ function buildLetterPoolSection(stage, stageIndex, label) {
     if (!stage.letterPool) return '';
     const randomCount = stage.randomLetters ? stage.randomLetters.length : 0;
     const randomNote = randomCount > 0
-        ? ` <span style="color: #dc2626; font-weight: 600;">(${randomCount} random letter${randomCount === 1 ? '' : 's'} &ndash; click highlight to remove)</span>`
+        ? ` <span style="color: #dc2626; font-weight: 600;">(${randomCount} random letter${randomCount === 1 ? '' : 's'} &ndash; click to remove)</span>`
         : '';
     return `
         <div style="margin-bottom: 12px;">
@@ -947,12 +947,8 @@ function addMissingLettersAsWord(stageIndex, letters) {
 
     const word = letters.toLowerCase();
 
-    // Allow duplicate letters to be added (you might need multiple of the same letter)
-    stages[stageIndex].sourceWords.push(word);
-    renderPuzzleBuilder();
-
-    // Auto-validate after adding word
-    autoValidateStage(stageIndex);
+    // Add as random letter (highlighted in yellow)
+    addRandomLettersToStage(stageIndex, word);
 }
 
 function removeSourceWord(stageIndex, word) {
