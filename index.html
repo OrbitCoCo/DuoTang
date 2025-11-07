@@ -19,7 +19,6 @@
                     <h2 style="margin: 0;">Puzzle Stages</h2>
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <button id="btn-toggle-filters" class="btn btn-secondary" onclick="toggleGlobalFilters()">🔍 Filters</button>
-                        <button id="btn-add-stage" class="btn btn-primary">+ Add Stage</button>
                     </div>
                 </div>
 
@@ -56,14 +55,14 @@
                     <!-- Dynamically populated stages will go here -->
                 </div>
 
-                <div style="margin: 20px 0; padding: 16px; background: #e8f4f2; border: 3px solid var(--persian-green); border-radius: 15px; text-align: center;">
-                    <button id="btn-auto-generate" class="btn btn-primary" onclick="autoGeneratePuzzle()" style="font-size: 15px; padding: 10px 24px;">
-                        ✨ Auto Generate Puzzle
+                <div style="margin: 20px 0; padding: 12px; background: #f5f5f5; border: 2px solid #e0e0e0; border-radius: 8px; text-align: center;">
+                    <button id="btn-auto-generate" class="btn btn-secondary" onclick="autoGeneratePuzzle()" style="font-size: 13px; padding: 6px 16px;">
+                        Auto Generate Puzzle
                     </button>
-                    <div style="font-size: 12px; color: #666; margin-top: 8px;">
+                    <div style="font-size: 11px; color: #888; margin-top: 6px;">
                         Fill in target words, then click to auto-generate source words for all stages
                     </div>
-                    <div id="auto-generate-status" style="margin-top: 12px; font-size: 13px; font-weight: 600;"></div>
+                    <div id="auto-generate-status" style="margin-top: 8px; font-size: 12px; font-weight: 600;"></div>
                 </div>
 
                 <div id="puzzle-summary" class="summary-panel" style="display: none;">

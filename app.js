@@ -186,8 +186,8 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
         }
     }
 
-    // Shuffle relevant words to get diverse results across alphabet
-    const shuffled = [...relevantWords].sort(() => Math.random() - 0.5);
+    // Shuffle relevant words to get diverse results across alphabet (but not when including incomplete)
+    const shuffled = includeIncomplete ? relevantWords : [...relevantWords].sort(() => Math.random() - 0.5);
 
     // Find single words that, combined with available letters, make the target
     if (minWords <= 1) {
@@ -203,7 +203,7 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
                 // Include incomplete words if the option is enabled
                 combinations.push({words: [word], complete: false});
                 if (progressCallback && combinations.length % 50 === 0) progressCallback([...combinations]);
-                if (combinations.length >= 200) return combinations;
+                if (combinations.length >= 500) return combinations;  // Higher limit for incomplete
             }
         }
     }
@@ -423,8 +423,6 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
     targetWords = ['', ''];
 
-    document.getElementById('btn-add-stage').addEventListener('click', addStage);
-
     renderPuzzleBuilder();
 });
 
@@ -437,6 +435,12 @@ function renderPuzzleBuilder() {
         const stageEl = createStageElement(stage, index);
         container.appendChild(stageEl);
     });
+
+    // Add "Add Stage" button after all stages
+    const addButton = document.createElement('div');
+    addButton.style.cssText = 'margin-top: 16px; text-align: center;';
+    addButton.innerHTML = '<button id="btn-add-stage" class="btn btn-primary" onclick="addStage()">+ Add Stage</button>';
+    container.appendChild(addButton);
 
     updateSummary();
 }
