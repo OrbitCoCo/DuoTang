@@ -45,23 +45,22 @@ function subtractLetters(pool, word) {
 
 function findAnagrams(letters, exactMatch = false) {
     const results = [];
-    const letterCounts = getLetterCounts(letters);
 
-    for (const word of currentWordList) {
-        if (exactMatch) {
-            // For exact match, all letters must be used
-            if (sortString(word) === sortString(letters)) {
-                results.push(word);
-            }
-        } else {
-            // For partial match, word can use subset of letters
+    if (exactMatch) {
+        // OPTIMIZED: Use Letter Signature Index for exact anagrams (O(1) lookup)
+        const signature = sortString(letters);
+        const matches = currentSignatureIndex[signature] || [];
+        return [...matches]; // Return copy of array
+    } else {
+        // For partial match, word can use subset of letters
+        const letterCounts = getLetterCounts(letters);
+        for (const word of currentWordList) {
             if (canMakeWord(word, letters)) {
                 results.push(word);
             }
         }
+        return results;
     }
-
-    return results;
 }
 
 async function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false, progressCallback = null) {
@@ -97,36 +96,65 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
     // Get unique letters from target word for fallback filtering
     const targetLetters = new Set(targetWord.toLowerCase().split(''));
 
-    // Filter words based on what we need
+    // OPTIMIZED: Use First Letter + Length Index to reduce search space
+    // Instead of checking all words, only check words that:
+    // 1. Start with a letter from the target word
+    // 2. Match the length criteria
     const targetLower = targetWord.toLowerCase();
-    const relevantWords = currentWordList.filter(w => {
-        // Apply user-defined length filter
-        if (w.length < minLength || w.length > maxLength) return false;
-        // Exclude target word itself
-        if (w.toLowerCase() === targetLower) return false;
-        // Exclude ignored words
-        if (ignoreWords.has(w.toLowerCase())) return false;
+    const relevantWords = [];
 
-        // If we know what letters we're missing, prioritize words that have those letters
-        if (availableLetters && missingLetters.size > 0) {
-            for (const letter of w.toLowerCase()) {
-                if (missingLetters.has(letter)) return true;
-            }
-            // If includeIncomplete is true, also include words that don't have missing letters
-            if (includeIncomplete) {
-                for (const letter of w.toLowerCase()) {
-                    if (targetLetters.has(letter)) return true;
+    // Iterate through letters in target word
+    for (const firstLetter of targetLetters) {
+        const wordsWithLetter = currentFirstLetterLengthIndex[firstLetter];
+        if (!wordsWithLetter) continue;
+
+        // Check each length in range
+        for (let length = minLength; length <= maxLength; length++) {
+            const wordsOfLength = wordsWithLetter[length];
+            if (!wordsOfLength) continue;
+
+            // Apply additional filters
+            for (const w of wordsOfLength) {
+                // Exclude target word itself
+                if (w.toLowerCase() === targetLower) continue;
+                // Exclude ignored words
+                if (ignoreWords.has(w.toLowerCase())) continue;
+
+                // If we know what letters we're missing, prioritize words that have those letters
+                if (availableLetters && missingLetters.size > 0) {
+                    let hasMissingLetter = false;
+                    for (const letter of w.toLowerCase()) {
+                        if (missingLetters.has(letter)) {
+                            hasMissingLetter = true;
+                            break;
+                        }
+                    }
+
+                    if (hasMissingLetter) {
+                        relevantWords.push(w);
+                        continue;
+                    }
+
+                    // If includeIncomplete is true, also include words that don't have missing letters
+                    if (includeIncomplete) {
+                        let hasTargetLetter = false;
+                        for (const letter of w.toLowerCase()) {
+                            if (targetLetters.has(letter)) {
+                                hasTargetLetter = true;
+                                break;
+                            }
+                        }
+                        if (hasTargetLetter) {
+                            relevantWords.push(w);
+                        }
+                    }
+                } else {
+                    // Word starts with a letter from target, so it's relevant
+                    relevantWords.push(w);
                 }
             }
-            return false;
         }
-
-        // Otherwise, check if word has at least one letter from target
-        for (const letter of w.toLowerCase()) {
-            if (targetLetters.has(letter)) return true;
-        }
-        return false;
-    });
+    }
 
     // Shuffle relevant words to get diverse results across alphabet
     const shuffled = [...relevantWords].sort(() => Math.random() - 0.5);
@@ -152,36 +180,90 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
 
     // Find pairs of words that (with available letters) contain all letters of target word
     if (minWords <= 2 && maxWords >= 2) {
-        // Search through all relevant words for complete coverage
         const searchWords = shuffled;
         let iterationCount = 0;
         let lastUpdate = 0;
 
-        for (let i = 0; i < searchWords.length; i++) {
-            const word1 = searchWords[i];
-            for (let j = 0; j < searchWords.length; j++) {
+        // OPTIMIZATION: Pre-compute letter counts for all words (avoid recalculating in inner loop)
+        const wordData = searchWords.map(word => ({
+            word: word,
+            counts: getLetterCounts(word),
+            letterSet: new Set(word.toLowerCase().split(''))
+        }));
+
+        const targetCounts = getLetterCounts(targetWord);
+        const availableCounts = getLetterCounts(availableLetters);
+
+        // OPTIMIZATION: Use Set for O(1) duplicate detection instead of O(m) .some()
+        const seenPairs = new Set();
+
+        for (let i = 0; i < wordData.length; i++) {
+            const data1 = wordData[i];
+
+            // Calculate what letters word1 + available letters provide
+            const word1PlusAvailableCounts = {...availableCounts};
+            for (const [letter, count] of Object.entries(data1.counts)) {
+                word1PlusAvailableCounts[letter] = (word1PlusAvailableCounts[letter] || 0) + count;
+            }
+
+            // What letters are still missing?
+            const stillMissing = new Set();
+            for (const [letter, needed] of Object.entries(targetCounts)) {
+                const have = word1PlusAvailableCounts[letter] || 0;
+                if (have < needed) {
+                    stillMissing.add(letter);
+                }
+            }
+
+            // If word1 + available already completes it, we found it in the single-word phase
+            if (stillMissing.size === 0) continue;
+
+            for (let j = 0; j < wordData.length; j++) {
                 if (i === j) continue; // Skip pairing a word with itself
 
-                const word2 = searchWords[j];
-                const combined = availableLetters + word1 + word2;
+                const data2 = wordData[j];
 
-                if (combined.length >= targetLen) {
-                    if (canMakeWord(targetWord, combined)) {
-                        // Check if we already have this combination (to avoid duplicates like [a,b] and [b,a])
-                        const sortedPair = [word1, word2].sort().join('+');
-                        const isDuplicate = combinations.some(c => {
-                            if (c.words.length !== 2) return false;
-                            return c.words.sort().join('+') === sortedPair;
-                        });
+                // OPTIMIZATION: Quick length check before expensive operations
+                const combinedLength = availableLetters.length + data1.word.length + data2.word.length;
+                if (combinedLength < targetLen) continue; // Can't possibly work
 
-                        if (!isDuplicate) {
-                            combinations.push({words: [word1, word2], complete: true});
+                // OPTIMIZATION: Skip word2 if it doesn't provide any missing letters
+                let providesNeeded = false;
+                for (const letter of stillMissing) {
+                    if (data2.letterSet.has(letter)) {
+                        providesNeeded = true;
+                        break;
+                    }
+                }
+                if (!providesNeeded) continue;
 
-                            // Send progress update every 50 new combinations
-                            if (progressCallback && combinations.length - lastUpdate >= 50) {
-                                progressCallback([...combinations]);
-                                lastUpdate = combinations.length;
-                            }
+                // Now do the full check with pre-computed counts
+                const combinedCounts = {...word1PlusAvailableCounts};
+                for (const [letter, count] of Object.entries(data2.counts)) {
+                    combinedCounts[letter] = (combinedCounts[letter] || 0) + count;
+                }
+
+                // Check if combined counts satisfy target
+                let isComplete = true;
+                for (const [letter, needed] of Object.entries(targetCounts)) {
+                    if ((combinedCounts[letter] || 0) < needed) {
+                        isComplete = false;
+                        break;
+                    }
+                }
+
+                if (isComplete) {
+                    // OPTIMIZATION: Use Set for fast duplicate detection
+                    const sortedPair = [data1.word, data2.word].sort().join('+');
+
+                    if (!seenPairs.has(sortedPair)) {
+                        seenPairs.add(sortedPair);
+                        combinations.push({words: [data1.word, data2.word], complete: true});
+
+                        // Send progress update every 50 new combinations
+                        if (progressCallback && combinations.length - lastUpdate >= 50) {
+                            progressCallback([...combinations]);
+                            lastUpdate = combinations.length;
                         }
                     }
                 }
