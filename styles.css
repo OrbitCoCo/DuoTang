@@ -320,7 +320,7 @@ main {
     cursor: pointer;
     text-align: center;
     transition: all 0.1s;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     border: 3px solid var(--persian-green);
     box-shadow: 0 3px 0 #228276;

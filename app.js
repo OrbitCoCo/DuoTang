@@ -159,22 +159,29 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
 
         for (let i = 0; i < searchWords.length; i++) {
             const word1 = searchWords[i];
-            for (let j = i; j < searchWords.length; j++) {
+            for (let j = 0; j < searchWords.length; j++) {
+                if (i === j) continue; // Skip pairing a word with itself
+
                 const word2 = searchWords[j];
                 const combined = availableLetters + word1 + word2;
 
                 if (combined.length >= targetLen) {
                     if (canMakeWord(targetWord, combined)) {
-                        combinations.push({words: [word1, word2], complete: true});
-                        if (combinations.length >= 2000) {
-                            if (progressCallback) progressCallback([...combinations]);
-                            return combinations;
-                        }
+                        // Check if we already have this combination (to avoid duplicates like [a,b] and [b,a])
+                        const sortedPair = [word1, word2].sort().join('+');
+                        const isDuplicate = combinations.some(c => {
+                            if (c.words.length !== 2) return false;
+                            return c.words.sort().join('+') === sortedPair;
+                        });
 
-                        // Send progress update every 50 new combinations
-                        if (progressCallback && combinations.length - lastUpdate >= 50) {
-                            progressCallback([...combinations]);
-                            lastUpdate = combinations.length;
+                        if (!isDuplicate) {
+                            combinations.push({words: [word1, word2], complete: true});
+
+                            // Send progress update every 50 new combinations
+                            if (progressCallback && combinations.length - lastUpdate >= 50) {
+                                progressCallback([...combinations]);
+                                lastUpdate = combinations.length;
+                            }
                         }
                     }
                 }
@@ -194,9 +201,9 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
 
         for (let i = 0; i < shortWords.length; i++) {
             const word1 = shortWords[i];
-            for (let j = i; j < shortWords.length; j++) {
+            for (let j = i + 1; j < shortWords.length; j++) {
                 const word2 = shortWords[j];
-                for (let k = j; k < shortWords.length; k++) {
+                for (let k = j + 1; k < shortWords.length; k++) {
                     const word3 = shortWords[k];
                     const combined = availableLetters + word1 + word2 + word3;
 
@@ -437,11 +444,21 @@ function createStageElement(stage, index) {
                                 <span>Show Incomplete</span>
                             </label>
                             <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; cursor: pointer;">
+                                <input type="checkbox" id="exact-match-toggle-${index}" onchange="toggleExactMatch(${index})" style="cursor: pointer;">
+                                <span>Exact Matches Only</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; cursor: pointer;">
                                 <input type="checkbox" id="sort-toggle-${index}" checked onchange="toggleSort(${index})" style="cursor: pointer;">
                                 <span>Sort by Best Match</span>
                             </label>
                             <button class="btn btn-secondary btn-small" onclick="hideSuggestions(${index})" style="padding: 4px 8px; font-size: 11px;">Hide</button>
                         </div>
+                    </div>
+                    <div style="display: flex; gap: 12px; margin-bottom: 8px; font-size: 10px; color: #666; padding: 6px 8px; background: #fef9f0; border-radius: 8px; border: 2px solid #e0e0e0;">
+                        <span style="font-weight: 600;">Legend:</span>
+                        <span><span style="color: black; font-weight: 700;">Black</span> = Current target</span>
+                        <span><span style="color: #15803d; font-weight: 700;">Green</span> = Future target</span>
+                        <span><span style="color: #dc2626; font-weight: 700;">Red</span> = Not needed</span>
                     </div>
                     <div id="suggestions-list-${index}" class="suggestions-list"></div>
                 </div>
@@ -650,16 +667,29 @@ function toggleGlobalFilters() {
     }
 }
 
-function sortByBestMatch(combinations, targetWord, existingLetters) {
+function sortByBestMatch(combinations, targetWord, existingLetters, stageIndex) {
     const targetCounts = getLetterCounts(targetWord);
     const existingCounts = getLetterCounts(existingLetters);
 
-    // Calculate what letters we're still missing
+    // Calculate what letters we're still missing for current target
     const missingCounts = {};
     for (const [letter, count] of Object.entries(targetCounts)) {
         const existing = existingCounts[letter] || 0;
         if (existing < count) {
             missingCounts[letter] = count - existing;
+        }
+    }
+
+    // Get future target words (if stageIndex is provided)
+    const futureCounts = {};
+    if (stageIndex !== undefined) {
+        for (let i = stageIndex + 1; i < stages.length; i++) {
+            if (stages[i].targetWord) {
+                const futureTargetCounts = getLetterCounts(stages[i].targetWord);
+                for (const [letter, count] of Object.entries(futureTargetCounts)) {
+                    futureCounts[letter] = (futureCounts[letter] || 0) + count;
+                }
+            }
         }
     }
 
@@ -670,18 +700,35 @@ function sortByBestMatch(combinations, targetWord, existingLetters) {
         const allLetters = existingLetters + comboLetters;
         const allCounts = getLetterCounts(allLetters);
 
-        // Count how many missing letters this combo provides
+        // Count how many missing letters this combo provides for current target
         let missingProvided = 0;
+        const remainingComboCounts = { ...comboCounts };
+
         for (const [letter, neededCount] of Object.entries(missingCounts)) {
-            const provided = Math.min(comboCounts[letter] || 0, neededCount);
+            const provided = Math.min(remainingComboCounts[letter] || 0, neededCount);
             missingProvided += provided;
+            // Subtract used letters
+            if (remainingComboCounts[letter]) {
+                remainingComboCounts[letter] -= provided;
+            }
         }
 
-        // Count excess letters (letters beyond what target needs)
+        // Count how many future target letters the remaining letters provide
+        let futureProvided = 0;
+        for (const [letter, count] of Object.entries(remainingComboCounts)) {
+            if (count > 0 && futureCounts[letter]) {
+                const provided = Math.min(count, futureCounts[letter]);
+                futureProvided += provided;
+            }
+        }
+
+        // Count excess letters (letters beyond what current AND future targets need)
         let excessCount = 0;
         for (const [letter, count] of Object.entries(allCounts)) {
-            const needed = targetCounts[letter] || 0;
-            const excess = count - needed;
+            const currentNeeded = targetCounts[letter] || 0;
+            const futureNeeded = futureCounts[letter] || 0;
+            const totalNeeded = currentNeeded + futureNeeded;
+            const excess = count - totalNeeded;
             if (excess > 0) {
                 excessCount += excess;
             }
@@ -689,7 +736,7 @@ function sortByBestMatch(combinations, targetWord, existingLetters) {
 
         // Calculate efficiency ratio
         const totalLength = comboLetters.length;
-        const efficiency = totalLength > 0 ? missingProvided / totalLength : 0;
+        const efficiency = totalLength > 0 ? (missingProvided + futureProvided) / totalLength : 0;
 
         // Complete words come before incomplete
         const completePriority = comboObj.complete ? 0 : 1;
@@ -698,19 +745,23 @@ function sortByBestMatch(combinations, targetWord, existingLetters) {
             combo: comboObj,
             completePriority: completePriority,
             missingProvided: missingProvided,
+            futureProvided: futureProvided,
             excessCount: excessCount,
             efficiency: efficiency,
             totalLength: totalLength
         };
     });
 
-    // Sort by: complete first, most missing letters provided, fewest excess, highest efficiency
+    // Sort by: complete first, most missing letters provided, most future letters provided, fewest excess, highest efficiency
     scored.sort((a, b) => {
         if (a.completePriority !== b.completePriority) {
             return a.completePriority - b.completePriority;
         }
         if (a.missingProvided !== b.missingProvided) {
             return b.missingProvided - a.missingProvided; // More is better
+        }
+        if (a.futureProvided !== b.futureProvided) {
+            return b.futureProvided - a.futureProvided; // More is better
         }
         if (a.excessCount !== b.excessCount) {
             return a.excessCount - b.excessCount; // Fewer is better
@@ -778,9 +829,31 @@ async function showSuggestions(stageIndex, mode = 'single') {
 
             // Store both sorted and unsorted versions
             stage.unsortedCombinations = currentCombinations;
-            stage.sortedCombinations = sortByBestMatch(currentCombinations, stage.targetWord, allExistingLetters);
+            stage.sortedCombinations = sortByBestMatch(currentCombinations, stage.targetWord, allExistingLetters, stageIndex);
 
-            stage.currentCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
+            // Apply exact match filter if enabled
+            const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
+            let finalCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
+
+            if (exactMatchToggle && exactMatchToggle.checked) {
+                const targetCounts = getLetterCounts(stage.targetWord);
+                finalCombinations = finalCombinations.filter(comboObj => {
+                    const comboLetters = comboObj.words.join('');
+                    const allLetters = allExistingLetters + comboLetters;
+                    const allCounts = getLetterCounts(allLetters);
+
+                    // Check if there are any excess letters
+                    for (const [letter, count] of Object.entries(allCounts)) {
+                        const needed = targetCounts[letter] || 0;
+                        if (count > needed) {
+                            return false; // Has excess letters
+                        }
+                    }
+                    return true; // No excess letters - exact match
+                });
+            }
+
+            stage.currentCombinations = finalCombinations;
             stage.combinationsShown = 0;
 
             renderSuggestions(stageIndex, mode);
@@ -800,8 +873,31 @@ async function showSuggestions(stageIndex, mode = 'single') {
 
         // Final update with all combinations
         stage.unsortedCombinations = combinations;
-        stage.sortedCombinations = sortByBestMatch(combinations, stage.targetWord, allExistingLetters);
-        stage.currentCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
+        stage.sortedCombinations = sortByBestMatch(combinations, stage.targetWord, allExistingLetters, stageIndex);
+
+        // Apply exact match filter if enabled
+        const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
+        let finalCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
+
+        if (exactMatchToggle && exactMatchToggle.checked) {
+            const targetCounts = getLetterCounts(stage.targetWord);
+            finalCombinations = finalCombinations.filter(comboObj => {
+                const comboLetters = comboObj.words.join('');
+                const allLetters = allExistingLetters + comboLetters;
+                const allCounts = getLetterCounts(allLetters);
+
+                // Check if there are any excess letters
+                for (const [letter, count] of Object.entries(allCounts)) {
+                    const needed = targetCounts[letter] || 0;
+                    if (count > needed) {
+                        return false; // Has excess letters
+                    }
+                }
+                return true; // No excess letters - exact match
+            });
+        }
+
+        stage.currentCombinations = finalCombinations;
         stage.combinationsShown = 0;
 
         renderSuggestions(stageIndex, mode);
@@ -857,13 +953,32 @@ function renderSuggestions(stageIndex, mode) {
         }
     }
 
-    // Helper function to highlight missing letters in a word
+    // Helper function to highlight letters by relevance
     const highlightWord = (word) => {
-        return word.split('').map(letter => {
-            if (missingLetters.has(letter.toLowerCase())) {
-                return `<span style="color: #1e40af; font-weight: 700;">${letter}</span>`;
+        // Get current target word letters
+        const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
+
+        // Get subsequent target words letters
+        const futureLetters = new Set();
+        for (let i = stageIndex + 1; i < stages.length; i++) {
+            if (stages[i].targetWord) {
+                stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
             }
-            return letter;
+        }
+
+        return word.split('').map(letter => {
+            const lowerLetter = letter.toLowerCase();
+
+            if (targetLetters.has(lowerLetter)) {
+                // Letter appears in current target word - normal black
+                return `<span style="color: black;">${letter}</span>`;
+            } else if (futureLetters.has(lowerLetter)) {
+                // Letter appears in subsequent target words - green
+                return `<span style="color: #15803d; font-weight: 700;">${letter}</span>`;
+            } else {
+                // Letter doesn't appear in any target word - red
+                return `<span style="color: #dc2626; font-weight: 700;">${letter}</span>`;
+            }
         }).join('');
     };
 
@@ -919,15 +1034,42 @@ function loadMoreSuggestions(stageIndex, mode) {
 function toggleSort(stageIndex) {
     const stage = stages[stageIndex];
     const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
+    const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
 
     // Only refresh if suggestions are currently visible
     const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
     if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
         // Switch between sorted and unsorted
+        let baseSource;
         if (sortToggle.checked) {
-            stage.currentCombinations = stage.sortedCombinations;
+            baseSource = stage.sortedCombinations;
         } else {
-            stage.currentCombinations = stage.unsortedCombinations;
+            baseSource = stage.unsortedCombinations;
+        }
+
+        // Apply exact match filter if enabled
+        if (exactMatchToggle && exactMatchToggle.checked) {
+            const existingWords = stage.sourceWords.join('');
+            const availableLetters = stage.letterPool || '';
+            const allExistingLetters = availableLetters + existingWords;
+            const targetCounts = getLetterCounts(stage.targetWord);
+
+            stage.currentCombinations = baseSource.filter(comboObj => {
+                const comboLetters = comboObj.words.join('');
+                const allLetters = allExistingLetters + comboLetters;
+                const allCounts = getLetterCounts(allLetters);
+
+                // Check if there are any excess letters
+                for (const [letter, count] of Object.entries(allCounts)) {
+                    const needed = targetCounts[letter] || 0;
+                    if (count > needed) {
+                        return false; // Has excess letters
+                    }
+                }
+                return true; // No excess letters - exact match
+            });
+        } else {
+            stage.currentCombinations = baseSource;
         }
 
         // Reset to show from the beginning
@@ -945,6 +1087,47 @@ function toggleIncomplete(stageIndex) {
     if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
         // Re-run the suggestions with the new incomplete setting
         showSuggestions(stageIndex, stage.currentMode);
+    }
+}
+
+function toggleExactMatch(stageIndex) {
+    const stage = stages[stageIndex];
+    const exactMatchToggle = document.getElementById(`exact-match-toggle-${stageIndex}`);
+    const suggestionsDiv = document.getElementById(`suggestions-${stageIndex}`);
+
+    if (suggestionsDiv && suggestionsDiv.style.display !== 'none' && stage.currentMode) {
+        const sortToggle = document.getElementById(`sort-toggle-${stageIndex}`);
+        const baseSource = sortToggle.checked ? stage.sortedCombinations : stage.unsortedCombinations;
+
+        if (exactMatchToggle.checked) {
+            // Filter to only show exact matches (no excess letters)
+            const existingWords = stage.sourceWords.join('');
+            const availableLetters = stage.letterPool || '';
+            const allExistingLetters = availableLetters + existingWords;
+            const targetCounts = getLetterCounts(stage.targetWord);
+
+            stage.currentCombinations = baseSource.filter(comboObj => {
+                const comboLetters = comboObj.words.join('');
+                const allLetters = allExistingLetters + comboLetters;
+                const allCounts = getLetterCounts(allLetters);
+
+                // Check if there are any excess letters
+                for (const [letter, count] of Object.entries(allCounts)) {
+                    const needed = targetCounts[letter] || 0;
+                    if (count > needed) {
+                        return false; // Has excess letters
+                    }
+                }
+                return true; // No excess letters - exact match
+            });
+        } else {
+            // Show all combinations
+            stage.currentCombinations = baseSource;
+        }
+
+        // Reset to show from the beginning
+        stage.combinationsShown = 0;
+        renderSuggestions(stageIndex, stage.currentMode);
     }
 }
 
