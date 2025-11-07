@@ -55,13 +55,17 @@
                     <!-- Dynamically populated stages will go here -->
                 </div>
 
-                <div style="margin: 20px 0; padding: 12px; background: #f5f5f5; border: 2px solid #e0e0e0; border-radius: 8px; text-align: center;">
+                <div style="margin: 20px 0; padding: 12px; background: #f5f5f5; border: 2px solid #e0e0e0; border-radius: 8px; text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center;">
                     <button id="btn-auto-generate" class="btn btn-secondary" onclick="autoGeneratePuzzle()" style="font-size: 13px; padding: 6px 16px;">
                         Auto Generate Puzzle
                     </button>
                     <button class="btn btn-secondary" onclick="clearSourceWords()" style="font-size: 13px; padding: 6px 16px; margin-left: 8px;">
-                        Clear
+                        Clear Source Words
                     </button>
+                    <label style="display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: #555;">
+                        <input type="checkbox" id="allow-first-stage-random" onchange="handleFirstStageRandomToggle()">
+                        <span>Allow auto generation to add random letters on Stage 1</span>
+                    </label>
                     <div style="font-size: 11px; color: #888; margin-top: 6px;">
                         Fill in target words, then click to auto-generate source words for all stages
                     </div>

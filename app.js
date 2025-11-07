@@ -2,6 +2,7 @@
 let targetWords = [];
 let stages = [];
 let currentStage = 0;
+let allowFirstStageRandom = false;
 
 // Utility functions
 function sortString(str) {
@@ -521,8 +522,22 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
     targetWords = ['', ''];
 
+    const firstStageToggle = document.getElementById('allow-first-stage-random');
+    if (firstStageToggle) {
+        firstStageToggle.checked = false;
+    }
+    handleFirstStageRandomToggle();
     renderPuzzleBuilder();
 });
+
+function handleFirstStageRandomToggle() {
+    const checkbox = document.getElementById('allow-first-stage-random');
+    allowFirstStageRandom = checkbox ? checkbox.checked : false;
+}
+
+function isFirstStageRandomAllowed() {
+    return allowFirstStageRandom;
+}
 
 // Step 2: Build Puzzle
 function renderPuzzleBuilder() {
@@ -1734,13 +1749,17 @@ const AUTO_SOLVER_CONFIG = {
 };
 
 class PuzzleAutoSolver {
-    constructor(stageData) {
+    constructor(stageData, options = {}) {
         this.stageData = stageData;
         this.config = AUTO_SOLVER_CONFIG;
         this.memo = new Map();
         this.candidateCache = new Map();
         this.futureNeeds = this.computeFutureNeeds();
         this.stageTargetCounts = stageData.map(data => data.targetCounts || getLetterCountsArray(data.targetWord));
+        this.options = {
+            allowFirstStageRandom: false,
+            ...options
+        };
         this.nodesExplored = 0;
         this.bestPartial = null;
     }
@@ -1861,8 +1880,8 @@ class PuzzleAutoSolver {
                 }
 
                 const randomLetters = countsArrayToString(missingCounts);
-                if (index === 0 && randomLetters.length > 0 && words.length === 0) {
-                    return; // First stage cannot start with random letters only
+                if (!this.options.allowFirstStageRandom && index === 0 && randomLetters.length > 0) {
+                    return; // First stage cannot add random letters when disabled
                 }
                 if (randomLetters) {
                     addStringToCounts(poolCounts, randomLetters);
@@ -1994,7 +2013,9 @@ async function autoGeneratePuzzle() {
         };
     });
 
-    const solver = new PuzzleAutoSolver(stageData);
+    const solver = new PuzzleAutoSolver(stageData, {
+        allowFirstStageRandom: isFirstStageRandomAllowed()
+    });
     const result = await solver.solve();
 
     if (!result) {
