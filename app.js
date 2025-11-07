@@ -46,6 +46,64 @@ function addCountsArray(counts1, counts2) {
     }
 }
 
+const wordCountsCache = new Map();
+
+function getCachedWordCounts(word) {
+    const key = word.toLowerCase();
+    if (!wordCountsCache.has(key)) {
+        wordCountsCache.set(key, getLetterCountsArray(key));
+    }
+    return wordCountsCache.get(key);
+}
+
+function addStringToCounts(counts, str) {
+    for (let i = 0; i < str.length; i++) {
+        const code = str.charCodeAt(i) | 32;
+        if (code >= 97 && code <= 122) {
+            counts[code - 97]++;
+        }
+    }
+}
+
+function subtractCountsToPositive(totalCounts, subtractCounts) {
+    const result = new Uint8Array(26);
+    for (let i = 0; i < 26; i++) {
+        const diff = totalCounts[i] - subtractCounts[i];
+        result[i] = diff > 0 ? diff : 0;
+    }
+    return result;
+}
+
+function countsArrayToString(counts) {
+    let result = '';
+    for (let i = 0; i < 26; i++) {
+        const count = counts[i];
+        if (count > 0) {
+            result += String.fromCharCode(97 + i).repeat(count);
+        }
+    }
+    return result;
+}
+
+function removeFirstOccurrence(str, letter) {
+    const idx = str.indexOf(letter);
+    if (idx === -1) return str;
+    return str.slice(0, idx) + str.slice(idx + 1);
+}
+
+function getMissingLetterInfo(targetCounts, availableCounts) {
+    const missingCounts = new Uint8Array(26);
+    let missingTotal = 0;
+    for (let i = 0; i < 26; i++) {
+        if (targetCounts[i] > availableCounts[i]) {
+            const diff = targetCounts[i] - availableCounts[i];
+            missingCounts[i] = diff;
+            missingTotal += diff;
+        }
+    }
+    return {missingCounts, missingTotal};
+}
+
 function canMakeWord(word, availableLetters) {
     const wordCounts = getLetterCounts(word);
     const availableCounts = getLetterCounts(availableLetters);
@@ -93,13 +151,15 @@ function findAnagrams(letters, exactMatch = false) {
     }
 }
 
-async function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false, progressCallback = null) {
+async function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false, progressCallback = null, maxMissingLetters = 0) {
     const combinations = [];
     const targetLen = targetWord.length;
+    const targetCountsArrayFull = getLetterCountsArray(targetWord);
+    const allowMissing = includeIncomplete || maxMissingLetters > 0;
 
     // If we have available letters from previous stage, check if they alone can make the target
     if (availableLetters && canMakeWord(targetWord, availableLetters)) {
-        combinations.push({words: [], complete: true});  // Empty array means "use available letters only"
+        combinations.push({words: [], complete: true, missingCount: 0});  // Empty array means "use available letters only"
         if (progressCallback) progressCallback([...combinations]);
     }
 
@@ -193,17 +253,25 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
     if (minWords <= 1) {
         for (const word of shuffled) {
             const combined = availableLetters + word;
-            const isComplete = combined.length >= targetLen && canMakeWord(targetWord, combined);
+            const combinedCounts = getLetterCountsArray(combined);
+            const {missingTotal} = getMissingLetterInfo(targetCountsArrayFull, combinedCounts);
+            const isComplete = missingTotal === 0;
 
             if (isComplete) {
-                combinations.push({words: [word], complete: true});
+                combinations.push({words: [word], complete: true, missingCount: 0});
                 if (progressCallback) progressCallback([...combinations]);
                 if (combinations.length >= 200) return combinations;
-            } else if (includeIncomplete) {
-                // Include incomplete words if the option is enabled
-                combinations.push({words: [word], complete: false});
-                if (progressCallback && combinations.length % 50 === 0) progressCallback([...combinations]);
-                if (combinations.length >= 500) return combinations;  // Higher limit for incomplete
+            } else if (allowMissing) {
+                if (!includeIncomplete && missingTotal > maxMissingLetters) continue;
+                combinations.push({words: [word], complete: false, missingCount: missingTotal});
+                if (includeIncomplete && progressCallback && combinations.length % 50 === 0) {
+                    progressCallback([...combinations]);
+                }
+                if (includeIncomplete) {
+                    if (combinations.length >= 500) return combinations;
+                } else if (combinations.length >= 200) {
+                    return combinations;
+                }
             }
         }
     }
@@ -215,8 +283,8 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
         let lastUpdate = 0;
 
         // OPTIMIZATION 3: Array-based letter counts (10-20% faster)
-        const targetCounts = getLetterCountsArray(targetWord);
-        const availableCounts = getLetterCountsArray(availableLetters);
+        const targetCountsArray = getLetterCountsArray(targetWord);
+        const availableCountsArray = getLetterCountsArray(availableLetters);
 
         // OPTIMIZATION 1: Pre-compute letter counts for all words (avoid recalculating in inner loop)
         const wordData = searchWords.map(word => ({
@@ -241,13 +309,13 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
             const data1 = wordData[i];
 
             // Calculate what letters word1 + available letters provide
-            const word1PlusAvailableCounts = new Uint8Array(availableCounts);
+            const word1PlusAvailableCounts = new Uint8Array(availableCountsArray);
             addCountsArray(word1PlusAvailableCounts, data1.counts);
 
             // What letters are still missing?
             const stillMissingLetters = [];
             for (let letterIdx = 0; letterIdx < 26; letterIdx++) {
-                if (targetCounts[letterIdx] > word1PlusAvailableCounts[letterIdx]) {
+                if (targetCountsArray[letterIdx] > word1PlusAvailableCounts[letterIdx]) {
                     stillMissingLetters.push(String.fromCharCode(97 + letterIdx));
                 }
             }
@@ -281,13 +349,28 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
                 const combinedCounts = new Uint8Array(word1PlusAvailableCounts);
                 addCountsArray(combinedCounts, data2.counts);
 
-                if (canMakeWordArray(targetCounts, combinedCounts)) {
-                    combinations.push({words: [data1.word, data2.word], complete: true});
+                const {missingTotal} = getMissingLetterInfo(targetCountsArray, combinedCounts);
+                const isComplete = missingTotal === 0;
+                if (isComplete) {
+                    combinations.push({words: [data1.word, data2.word], complete: true, missingCount: 0});
 
                     // Send progress update every 50 new combinations
                     if (progressCallback && combinations.length - lastUpdate >= 50) {
                         progressCallback([...combinations]);
                         lastUpdate = combinations.length;
+                    }
+                } else if (allowMissing) {
+                    if (!includeIncomplete && missingTotal > maxMissingLetters) continue;
+                    combinations.push({words: [data1.word, data2.word], complete: false, missingCount: missingTotal});
+
+                    if (includeIncomplete && progressCallback && combinations.length - lastUpdate >= 50) {
+                        progressCallback([...combinations]);
+                        lastUpdate = combinations.length;
+                    }
+                    if (includeIncomplete) {
+                        if (combinations.length >= 500) return combinations;
+                    } else if (combinations.length >= 200) {
+                        return combinations;
                     }
                 }
 
@@ -313,9 +396,21 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
                     const combined = availableLetters + word1 + word2 + word3;
 
                     if (combined.length >= targetLen) {
-                        if (canMakeWord(targetWord, combined)) {
-                            combinations.push({words: [word1, word2, word3], complete: true});
+                        const combinedCounts = getLetterCountsArray(combined);
+                        const {missingTotal} = getMissingLetterInfo(targetCountsArrayFull, combinedCounts);
+                        const isComplete = missingTotal === 0;
+
+                        if (isComplete) {
+                            combinations.push({words: [word1, word2, word3], complete: true, missingCount: 0});
                             if (combinations.length >= 200) {
+                                return combinations;
+                            }
+                        } else if (allowMissing) {
+                            if (!includeIncomplete && missingTotal > maxMissingLetters) continue;
+                            combinations.push({words: [word1, word2, word3], complete: false, missingCount: missingTotal});
+                            if (includeIncomplete) {
+                                if (combinations.length >= 500) return combinations;
+                            } else if (combinations.length >= 200) {
                                 return combinations;
                             }
                         }
@@ -336,7 +431,8 @@ function addStage() {
         letterPool: '',
         remainingLetters: '',
         complete: false,
-        isFirst: stages.length === 0
+        isFirst: stages.length === 0,
+        randomLetters: ''
     };
 
     // Set letter pool from previous stage if it exists and is complete
@@ -410,7 +506,8 @@ document.addEventListener('DOMContentLoaded', () => {
             letterPool: '',
             remainingLetters: '',
             complete: false,
-            isFirst: true
+            isFirst: true,
+            randomLetters: ''
         },
         {
             targetWord: '',
@@ -418,7 +515,8 @@ document.addEventListener('DOMContentLoaded', () => {
             letterPool: '',
             remainingLetters: '',
             complete: false,
-            isFirst: false
+            isFirst: false,
+            randomLetters: ''
         }
     ];
     targetWords = ['', ''];
@@ -445,6 +543,44 @@ function renderPuzzleBuilder() {
     updateSummary();
 }
 
+function buildLetterTiles(stage, stageIndex) {
+    const letters = (stage.letterPool || '').split('');
+    if (!letters.length) return '';
+
+    const randomCounts = {};
+    (stage.randomLetters || '').split('').forEach(letter => {
+        if (!letter) return;
+        randomCounts[letter] = (randomCounts[letter] || 0) + 1;
+    });
+
+    const usageCounts = {};
+
+    return letters.map(letter => {
+        const used = usageCounts[letter] || 0;
+        const isRandom = used < (randomCounts[letter] || 0);
+        usageCounts[letter] = used + 1;
+        const randomIndex = isRandom ? used : -1;
+        const clickAttr = isRandom ? `onclick="removeRandomLetter(${stageIndex}, '${letter}', ${randomIndex})"` : '';
+        const title = isRandom ? 'Random letter (click to remove)' : 'Carry-over letter';
+        const extraStyle = isRandom ? 'background: #ffc107; border-color: #e0a800; cursor: pointer;' : '';
+        return `<span class="letter-tile" ${clickAttr} title="${title}" style="${extraStyle}">${letter.toUpperCase()}</span>`;
+    }).join('');
+}
+
+function buildLetterPoolSection(stage, stageIndex, label) {
+    if (!stage.letterPool) return '';
+    const randomCount = stage.randomLetters ? stage.randomLetters.length : 0;
+    const randomNote = randomCount > 0
+        ? ` <span style="color: #dc2626; font-weight: 600;">(${randomCount} random letter${randomCount === 1 ? '' : 's'} &ndash; click highlight to remove)</span>`
+        : '';
+    return `
+        <div style="margin-bottom: 12px;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">${label}:${randomNote}</div>
+            <div class="letters">${buildLetterTiles(stage, stageIndex)}</div>
+        </div>
+    `;
+}
+
 function createStageElement(stage, index) {
     const div = document.createElement('div');
     div.className = 'stage';
@@ -454,6 +590,8 @@ function createStageElement(stage, index) {
 
     const statusClass = stage.complete ? 'complete' : 'incomplete';
     const statusText = stage.complete ? 'Complete' : 'Incomplete';
+    const startingLettersSection = stage.targetWord && stage.isFirst ? buildLetterPoolSection(stage, index, 'Starting letters') : '';
+    const availableLettersSection = stage.targetWord && !stage.isFirst ? buildLetterPoolSection(stage, index, 'Available') : '';
 
     div.innerHTML = `
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: grab;" title="Drag to reorder">
@@ -478,29 +616,8 @@ function createStageElement(stage, index) {
             ` : ''}
         </div>
 
-        ${stage.targetWord && stage.isFirst && stage.letterPool ? `
-            <div style="margin-bottom: 12px;">
-                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Starting letters:${stage.randomLetters ? ' <span style="color: #dc2626; font-weight: 600;">(random)</span>' : ''}</div>
-                <div class="letters">
-                    ${stage.letterPool.split('').map(l => {
-                        const isRandom = stage.randomLetters && stage.randomLetters.includes(l);
-                        return `<span class="letter-tile" style="${isRandom ? 'background: #ffc107; border-color: #e0a800;' : ''}" title="${isRandom ? 'Random letter' : ''}">${l.toUpperCase()}</span>`;
-                    }).join('')}
-                </div>
-            </div>
-        ` : ''}
-
-        ${stage.targetWord && !stage.isFirst && stage.letterPool ? `
-            <div style="margin-bottom: 12px;">
-                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Available:${stage.randomLetters ? ' <span style="color: #dc2626; font-weight: 600;">(includes ' + stage.randomLetters.length + ' random letter' + (stage.randomLetters.length > 1 ? 's' : '') + ')</span>' : ''}</div>
-                <div class="letters">
-                    ${stage.letterPool.split('').map(l => {
-                        const isRandom = stage.randomLetters && stage.randomLetters.includes(l);
-                        return `<span class="letter-tile" style="${isRandom ? 'background: #ffc107; border-color: #e0a800;' : ''}" title="${isRandom ? 'Random letter' : ''}">${l.toUpperCase()}</span>`;
-                    }).join('')}
-                </div>
-            </div>
-        ` : ''}
+        ${startingLettersSection}
+        ${availableLettersSection}
 
         ${stage.targetWord && (stage.isFirst || stages[index - 1].complete) ? `
             <div style="margin-bottom: 12px;">
@@ -752,11 +869,58 @@ function checkSourceWordSpelling(stageIndex) {
     }
 }
 
+function addRandomLettersToStage(stageIndex, letters) {
+    if (!letters) return;
+    const stage = stages[stageIndex];
+    stage.randomLetters = (stage.randomLetters || '') + letters;
+    stage.letterPool = sortString((stage.letterPool || '') + letters);
+    renderPuzzleBuilder();
+    autoValidateStage(stageIndex);
+}
+
+function removeRandomLetter(stageIndex, letter, occurrenceIndex) {
+    const stage = stages[stageIndex];
+    if (!stage || !stage.randomLetters) return;
+
+    let seen = -1;
+    let removed = false;
+    let updatedRandom = '';
+    for (let i = 0; i < stage.randomLetters.length; i++) {
+        const ch = stage.randomLetters[i];
+        if (ch === letter && !removed) {
+            seen++;
+            if (seen === occurrenceIndex) {
+                removed = true;
+                continue;
+            }
+        }
+        updatedRandom += ch;
+    }
+
+    if (!removed) return;
+
+    stage.randomLetters = updatedRandom;
+    stage.letterPool = sortString(removeFirstOccurrence(stage.letterPool || '', letter));
+
+    renderPuzzleBuilder();
+    autoValidateStage(stageIndex);
+}
+
 function addSourceWord(stageIndex) {
     const input = document.getElementById(`source-input-${stageIndex}`);
     const word = input.value.trim().toLowerCase();
 
     if (!word) return;
+
+    if (word.length === 1) {
+        input.value = '';
+        const checkDiv = document.getElementById(`source-spell-check-${stageIndex}`);
+        if (checkDiv) {
+            checkDiv.innerHTML = '';
+        }
+        addRandomLettersToStage(stageIndex, word);
+        return;
+    }
 
     if (stages[stageIndex].sourceWords.includes(word)) {
         showMessage(stageIndex, `"${word}" is already added.`, 'error');
@@ -1507,6 +1671,25 @@ function startOver() {
     }
 }
 
+function clearSourceWords() {
+    stages.forEach(stage => {
+        stage.sourceWords = [];
+        stage.remainingLetters = '';
+        stage.letterPool = '';
+        stage.randomLetters = '';
+        stage.complete = false;
+    });
+
+    targetWords = stages.map(s => s.targetWord);
+    renderPuzzleBuilder();
+
+    const statusDiv = document.getElementById('auto-generate-status');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<span style="color: #2563eb;">Source words cleared</span>';
+        setTimeout(() => statusDiv.innerHTML = '', 2500);
+    }
+}
+
 function toggleWordList() {
     const checkbox = document.getElementById('use-expanded-wordlist');
     const useExpanded = checkbox.checked;
@@ -1543,322 +1726,234 @@ function toggleWordList() {
     console.log(`Switched to ${listType} word list (${wordCount} words)`);
 }
 
+
 // Auto-Generation Functions
 
-// Find best word combination for a target word with minimal excess letters
-async function findBestWordCombinationForTarget(targetWord, availableLetters = '', maxRandomLetters = 3) {
-    const targetCounts = getLetterCounts(targetWord);
-    const availableCounts = getLetterCounts(availableLetters);
+const AUTO_SOLVER_CONFIG = {
+    maxWordsPerStage: 3,
+    maxRandomLettersPerStage: 3,
+    maxCandidatesPerStage: 40,
+    maxSearchNodes: 12000,
+    maxCarryoverLetters: 15
+};
 
-    // Calculate what letters we're missing
-    const missingCounts = {};
-    for (const [letter, count] of Object.entries(targetCounts)) {
-        const available = availableCounts[letter] || 0;
-        if (available < count) {
-            missingCounts[letter] = count - available;
-        }
+class PuzzleAutoSolver {
+    constructor(stageData) {
+        this.stageData = stageData;
+        this.config = AUTO_SOLVER_CONFIG;
+        this.memo = new Map();
+        this.candidateCache = new Map();
+        this.futureNeeds = this.computeFutureNeeds();
+        this.nodesExplored = 0;
+        this.bestPartial = null;
     }
 
-    const missingLettersNeeded = Object.values(missingCounts).reduce((a, b) => a + b, 0);
+    computeFutureNeeds() {
+        const needs = [];
+        const running = new Uint16Array(26);
+        for (let i = this.stageData.length - 1; i >= 0; i--) {
+            needs[i] = new Uint16Array(running);
+            const counts = getLetterCountsArray(this.stageData[i].targetWord);
+            addCountsArray(running, counts);
+        }
+        return needs;
+    }
 
-    // If we can complete with available letters alone, no words needed
-    if (missingLettersNeeded === 0) {
-        return {
-            sourceWords: [],
-            randomLetters: '',
-            excess: Object.entries(availableCounts).reduce((sum, [letter, count]) => {
-                const needed = targetCounts[letter] || 0;
-                return sum + Math.max(0, count - needed);
-            }, 0)
+    async solve() {
+        const solution = await this.solveStage(0, '', []);
+        if (solution) {
+            return {success: true, stages: solution, remainingLetters: ''};
+        }
+        if (this.bestPartial) {
+            return {
+                success: false,
+                stages: this.bestPartial.stages,
+                remainingLetters: this.bestPartial.remainingLetters
+            };
+        }
+        return null;
+    }
+
+    async solveStage(index, availableLetters, path = []) {
+        if (index === this.stageData.length) {
+            if (availableLetters.length === 0) {
+                return [];
+            }
+            if (path.length === this.stageData.length) {
+                this.updateBestPartial(path, availableLetters);
+            }
+            return null;
+        }
+
+        this.nodesExplored++;
+        if (this.nodesExplored > this.config.maxSearchNodes) {
+            return null;
+        }
+
+        const key = `${index}|${sortString(availableLetters)}`;
+        if (this.memo.has(key)) {
+            return this.memo.get(key);
+        }
+
+        const solvePromise = (async () => {
+            const candidates = await this.buildCandidates(index, availableLetters);
+            if (!candidates || candidates.length === 0) {
+                return null;
+            }
+
+            for (const candidate of candidates) {
+                path.push(candidate);
+                const result = await this.solveStage(index + 1, candidate.remainingLetters, path);
+                if (result) {
+                    path.pop();
+                    return [candidate, ...result];
+                }
+
+                if (index === this.stageData.length - 1) {
+                    this.updateBestPartial(path, candidate.remainingLetters);
+                }
+
+                path.pop();
+
+                if (this.nodesExplored % 200 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+
+            return null;
+        })();
+
+        this.memo.set(key, solvePromise);
+        return solvePromise;
+    }
+
+    async buildCandidates(index, availableLetters) {
+        const cacheKey = `${index}|${sortString(availableLetters)}`;
+        if (this.candidateCache.has(cacheKey)) {
+            return this.candidateCache.get(cacheKey);
+        }
+
+        const candidatePromise = (async () => {
+            const stage = this.stageData[index];
+            const availableCounts = getLetterCountsArray(availableLetters);
+            const targetCounts = getLetterCountsArray(stage.targetWord);
+            const combos = await findWordCombinations(
+                stage.targetWord,
+                availableLetters,
+                1,
+                this.config.maxWordsPerStage,
+                2,
+                10,
+                false,
+                null,
+                this.config.maxRandomLettersPerStage
+            ) || [];
+
+            const futureCounts = this.futureNeeds[index] || new Uint16Array(26);
+            const candidateMap = new Map();
+
+            const addCandidateFromWords = (words = []) => {
+                const poolCounts = new Uint8Array(availableCounts);
+                for (const word of words) {
+                    addCountsArray(poolCounts, getCachedWordCounts(word));
+                }
+
+                const {missingCounts, missingTotal} = getMissingLetterInfo(targetCounts, poolCounts);
+                if (missingTotal > this.config.maxRandomLettersPerStage) {
+                    return;
+                }
+
+                const randomLetters = countsArrayToString(missingCounts);
+                if (index === 0 && randomLetters.length > 0 && words.length === 0) {
+                    return; // First stage cannot start with random letters only
+                }
+                if (randomLetters) {
+                    addStringToCounts(poolCounts, randomLetters);
+                }
+
+                const remainingCounts = subtractCountsToPositive(poolCounts, targetCounts);
+                const remainingLetters = countsArrayToString(remainingCounts);
+
+                if (this.config.maxCarryoverLetters && remainingLetters.length > this.config.maxCarryoverLetters) {
+                    return;
+                }
+
+                const score = this.computeCandidateScore(remainingCounts, futureCounts, randomLetters.length);
+                const candidateKey = `${remainingLetters}|${randomLetters.length}`;
+                const letterPool = sortString(availableLetters + randomLetters);
+                const candidate = {
+                    stageIndex: index,
+                    targetWord: stage.targetWord,
+                    sourceWords: [...words],
+                    randomLetters,
+                    letterPool,
+                    remainingLetters,
+                    score
+                };
+
+                const existing = candidateMap.get(candidateKey);
+                if (!existing || score < existing.score) {
+                    candidateMap.set(candidateKey, candidate);
+                }
+            };
+
+            addCandidateFromWords([]);
+
+            for (const combo of combos) {
+                addCandidateFromWords(combo.words || []);
+            }
+
+            const result = [...candidateMap.values()]
+                .sort((a, b) => a.score - b.score)
+                .slice(0, this.config.maxCandidatesPerStage);
+
+            return result;
+        })();
+
+        this.candidateCache.set(cacheKey, candidatePromise);
+        return candidatePromise;
+    }
+
+    computeCandidateScore(remainingCounts, futureCounts, randomLetterCount) {
+        let totalRemaining = 0;
+        let useful = 0;
+        for (let i = 0; i < 26; i++) {
+            const have = remainingCounts[i];
+            if (!have) continue;
+            totalRemaining += have;
+            const futureNeed = futureCounts ? futureCounts[i] : 0;
+            if (futureNeed > 0) {
+                useful += Math.min(have, futureNeed);
+            }
+        }
+        const wasted = totalRemaining - useful;
+        return randomLetterCount * 1000 + wasted * 50 + totalRemaining;
+    }
+
+    updateBestPartial(path, remainingLetters) {
+        if (path.length !== this.stageData.length) return;
+        if (this.bestPartial && remainingLetters.length >= this.bestPartial.remainingLetters.length) {
+            return;
+        }
+
+        this.bestPartial = {
+            stages: path.map(stage => ({
+                stageIndex: stage.stageIndex,
+                targetWord: stage.targetWord,
+                sourceWords: [...stage.sourceWords],
+                randomLetters: stage.randomLetters,
+                letterPool: stage.letterPool,
+                remainingLetters: stage.remainingLetters,
+                score: stage.score
+            })),
+            remainingLetters
         };
     }
-
-    // Try to find word combinations that minimize random letters needed
-    // Start with single words, then pairs, then triplets
-    const minLength = 2;
-    const maxLength = 10;
-
-    let bestSolution = null;
-    let bestRandomCount = Infinity;
-
-    // Try single words first
-    for (let mode = 1; mode <= 3; mode++) {
-        const combinations = await findWordCombinations(
-            targetWord,
-            availableLetters,
-            mode,
-            mode,
-            minLength,
-            maxLength,
-            false,
-            null
-        );
-
-        // Score each combination
-        for (const combo of combinations) {
-            const comboLetters = combo.words.join('');
-            const allLetters = availableLetters + comboLetters;
-            const allCounts = getLetterCounts(allLetters);
-
-            // Calculate missing and excess
-            let missing = 0;
-            let excess = 0;
-
-            for (const [letter, needed] of Object.entries(targetCounts)) {
-                const have = allCounts[letter] || 0;
-                if (have < needed) {
-                    missing += needed - have;
-                } else if (have > needed) {
-                    excess += have - needed;
-                }
-            }
-
-            // Add excess from letters not in target
-            for (const [letter, count] of Object.entries(allCounts)) {
-                if (!targetCounts[letter]) {
-                    excess += count;
-                }
-            }
-
-            // If this combination requires fewer random letters, it's better
-            if (missing <= maxRandomLetters && missing < bestRandomCount) {
-                bestRandomCount = missing;
-                bestSolution = {
-                    sourceWords: combo.words,
-                    randomLetters: '',
-                    missingCount: missing,
-                    excess: excess
-                };
-            } else if (missing === bestRandomCount && bestSolution && excess < bestSolution.excess) {
-                // If same random count, prefer less excess
-                bestSolution = {
-                    sourceWords: combo.words,
-                    randomLetters: '',
-                    missingCount: missing,
-                    excess: excess
-                };
-            }
-
-            // If we found a perfect solution with no random letters, stop searching
-            if (missing === 0 && excess === 0) {
-                return bestSolution;
-            }
-        }
-
-        // If we found a solution with 0 random letters, no need to check more complex combinations
-        if (bestSolution && bestSolution.missingCount === 0) {
-            break;
-        }
-    }
-
-    // If we found a solution, generate the random letters needed
-    if (bestSolution) {
-        if (bestSolution.missingCount > 0) {
-            const allLetters = availableLetters + bestSolution.sourceWords.join('');
-            const allCounts = getLetterCounts(allLetters);
-
-            let randomLetters = '';
-            for (const [letter, needed] of Object.entries(targetCounts)) {
-                const have = allCounts[letter] || 0;
-                if (have < needed) {
-                    randomLetters += letter.repeat(needed - have);
-                }
-            }
-            bestSolution.randomLetters = randomLetters;
-        }
-        return bestSolution;
-    }
-
-    // If no solution found with words, generate all letters as random (up to max)
-    let randomLetters = '';
-    let totalMissing = 0;
-    for (const [letter, count] of Object.entries(missingCounts)) {
-        totalMissing += count;
-    }
-
-    if (totalMissing <= maxRandomLetters) {
-        for (const [letter, count] of Object.entries(missingCounts)) {
-            randomLetters += letter.repeat(count);
-        }
-    } else {
-        // Can't complete even with max random letters - prioritize most needed letters
-        const sortedMissing = Object.entries(missingCounts).sort((a, b) => b[1] - a[1]);
-        let added = 0;
-        for (const [letter, count] of sortedMissing) {
-            const toAdd = Math.min(count, maxRandomLetters - added);
-            randomLetters += letter.repeat(toAdd);
-            added += toAdd;
-            if (added >= maxRandomLetters) break;
-        }
-    }
-
-    return {
-        sourceWords: [],
-        randomLetters: randomLetters,
-        missingCount: randomLetters.length,
-        excess: 0
-    };
 }
 
-// Find word combination that uses exactly the target letters (0 remaining)
-async function findExactWordCombination(targetWord, availableLetters = '', maxRandomLetters = 3, randomize = false) {
-    const targetCounts = getLetterCounts(targetWord);
-    const availableCounts = getLetterCounts(availableLetters);
-
-    // Calculate missing letters
-    const missingCounts = {};
-    for (const [letter, count] of Object.entries(targetCounts)) {
-        const available = availableCounts[letter] || 0;
-        if (available < count) {
-            missingCounts[letter] = count - available;
-        }
-    }
-
-    const minLength = 2;
-    const maxLength = 10;
-
-    const candidates = []; // Collect all candidates to potentially randomize
-
-    // Try different word combination sizes
-    for (let mode = 1; mode <= 3; mode++) {
-        const combinations = await findWordCombinations(
-            targetWord,
-            availableLetters,
-            mode,
-            mode,
-            minLength,
-            maxLength,
-            false,
-            null
-        );
-
-        for (const combo of combinations) {
-            const comboLetters = combo.words.join('');
-            const allLetters = availableLetters + comboLetters;
-            const allCounts = getLetterCounts(allLetters);
-
-            // Calculate missing and excess
-            let missing = 0;
-            let excess = 0;
-
-            for (const [letter, needed] of Object.entries(targetCounts)) {
-                const have = allCounts[letter] || 0;
-                if (have < needed) {
-                    missing += needed - have;
-                } else if (have > needed) {
-                    excess += have - needed;
-                }
-            }
-
-            // Count excess from letters not in target
-            for (const [letter, count] of Object.entries(allCounts)) {
-                if (!targetCounts[letter]) {
-                    excess += count;
-                }
-            }
-
-            // Only consider if missing is within limit
-            if (missing > maxRandomLetters) continue;
-
-            // Score: heavily penalize random letters, then excess
-            const score = missing * 1000 + excess;
-
-            candidates.push({
-                sourceWords: combo.words,
-                missingCount: missing,
-                excess: excess,
-                score: score
-            });
-
-            // If perfect solution and not randomizing, return immediately
-            if (score === 0 && !randomize) {
-                const solution = candidates[candidates.length - 1];
-                if (solution.missingCount > 0) {
-                    const allLetters = availableLetters + solution.sourceWords.join('');
-                    const allCounts = getLetterCounts(allLetters);
-                    let randomLetters = '';
-                    for (const [letter, needed] of Object.entries(targetCounts)) {
-                        const have = allCounts[letter] || 0;
-                        if (have < needed) {
-                            randomLetters += letter.repeat(needed - have);
-                        }
-                    }
-                    solution.randomLetters = randomLetters;
-                }
-                return solution;
-            }
-        }
-    }
-
-    // Sort candidates by score
-    candidates.sort((a, b) => a.score - b.score);
-
-    // If randomizing, pick from top candidates randomly
-    let bestSolution;
-    if (randomize && candidates.length > 0) {
-        const topCount = Math.min(10, candidates.length);
-        const randomIndex = Math.floor(Math.random() * topCount);
-        bestSolution = candidates[randomIndex];
-    } else if (candidates.length > 0) {
-        bestSolution = candidates[0];
-    }
-
-    // Generate random letters if needed
-    if (bestSolution && bestSolution.missingCount > 0) {
-        const allLetters = availableLetters + bestSolution.sourceWords.join('');
-        const allCounts = getLetterCounts(allLetters);
-
-        let randomLetters = '';
-        for (const [letter, needed] of Object.entries(targetCounts)) {
-            const have = allCounts[letter] || 0;
-            if (have < needed) {
-                randomLetters += letter.repeat(needed - have);
-            }
-        }
-        bestSolution.randomLetters = randomLetters;
-    } else if (!bestSolution) {
-        // No word combinations found - use only random letters (up to max)
-        let randomLetters = '';
-        let totalMissing = Object.values(missingCounts).reduce((a, b) => a + b, 0);
-
-        if (totalMissing <= maxRandomLetters) {
-            // Can complete with random letters
-            for (const [letter, count] of Object.entries(missingCounts)) {
-                randomLetters += letter.repeat(count);
-            }
-            bestSolution = {
-                sourceWords: [],
-                randomLetters: randomLetters,
-                missingCount: randomLetters.length,
-                excess: 0
-            };
-        } else {
-            // Too many missing - take what we can
-            const sortedMissing = Object.entries(missingCounts).sort((a, b) => b[1] - a[1]);
-            let added = 0;
-            for (const [letter, count] of sortedMissing) {
-                const toAdd = Math.min(count, maxRandomLetters - added);
-                randomLetters += letter.repeat(toAdd);
-                added += toAdd;
-                if (added >= maxRandomLetters) break;
-            }
-            bestSolution = {
-                sourceWords: [],
-                randomLetters: randomLetters,
-                missingCount: randomLetters.length,
-                excess: 0
-            };
-        }
-    }
-
-    return bestSolution;
-}
-
-// Main auto-generation function with backward optimization
 async function autoGeneratePuzzle() {
     const statusDiv = document.getElementById('auto-generate-status');
 
-    // Validate that all stages have target words
     const emptyStages = stages.filter(s => !s.targetWord.trim());
     if (emptyStages.length > 0) {
         statusDiv.innerHTML = '<span style="color: #dc2626;">⚠️ Please fill in all target words first</span>';
@@ -1866,9 +1961,8 @@ async function autoGeneratePuzzle() {
         return;
     }
 
-    statusDiv.innerHTML = '<span style="color: #667eea;">⏳ Generating puzzle...</span>';
+    statusDiv.innerHTML = '<span style="color: #667eea;">⏳ Searching for a perfect puzzle...</span>';
 
-    // Clear all existing source words
     stages.forEach(stage => {
         stage.sourceWords = [];
         stage.complete = false;
@@ -1877,155 +1971,55 @@ async function autoGeneratePuzzle() {
         stage.randomLetters = '';
     });
 
-    let totalRandomLetters = 0;
-    const maxIterations = 5;
-    let iteration = 0;
-    let finalRemaining = '';
+    const stageData = stages.map(stage => ({
+        targetWord: stage.targetWord.trim().toLowerCase()
+    }));
 
-    // Try to generate a valid puzzle with 0 remaining letters
-    while (iteration < maxIterations) {
-        iteration++;
-        totalRandomLetters = 0;
+    const solver = new PuzzleAutoSolver(stageData);
+    const result = await solver.solve();
 
-        // Reset stages for this iteration (except on first)
-        if (iteration > 1) {
-            stages.forEach(stage => {
-                stage.sourceWords = [];
-                stage.complete = false;
-                stage.remainingLetters = '';
-                stage.letterPool = '';
-                stage.randomLetters = '';
-            });
-        }
-
-        statusDiv.innerHTML = `<span style="color: #667eea;">⏳ Generating puzzle (attempt ${iteration}/${maxIterations})...</span>`;
-
-        // Generate for each stage
-        for (let i = 0; i < stages.length; i++) {
-            const stage = stages[i];
-
-            // Get available letters from previous stage
-            const availableLetters = i > 0 ? stages[i - 1].remainingLetters : '';
-
-            // For the last stage, strongly prefer 0 excess
-            // For other stages, allow some excess
-            // Randomize on retries to explore different solutions
-            const shouldRandomize = iteration > 1;
-            const solution = await findExactWordCombination(stage.targetWord, availableLetters, 3, shouldRandomize);
-
-            console.log(`Stage ${i+1}: target="${stage.targetWord}", available="${availableLetters}", solution=`, solution);
-
-            // Apply solution
-            stage.sourceWords = [...solution.sourceWords];
-            stage.randomLetters = solution.randomLetters || '';
-
-            // Set up letterPool: available from previous + any random letters needed
-            if (solution.randomLetters) {
-                totalRandomLetters += solution.randomLetters.length;
-                stage.letterPool = availableLetters + solution.randomLetters;
-            } else {
-                stage.letterPool = availableLetters;
-            }
-
-            // Validate and complete the stage
-            const allLetters = stage.letterPool + stage.sourceWords.join('');
-            stage.complete = canMakeWord(stage.targetWord, allLetters);
-            stage.remainingLetters = subtractLetters(allLetters, stage.targetWord);
-
-            console.log(`  -> letterPool="${stage.letterPool}", sourceWords=[${stage.sourceWords.join(',')}], remaining="${stage.remainingLetters}"`);
-
-            // Update next stage's letter pool
-            if (i < stages.length - 1) {
-                stages[i + 1].letterPool = stage.remainingLetters;
-            }
-
-            // Update UI progressively
-            renderPuzzleBuilder();
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-
-        // Check if final stage has 0 remaining
-        finalRemaining = stages[stages.length - 1].remainingLetters;
-        console.log(`Iteration ${iteration}: Final remaining = "${finalRemaining}"`);
-
-        if (finalRemaining.length === 0) {
-            break; // Success!
-        }
-    }
-
-    // If still have remaining letters, try to absorb them into target words
-    if (finalRemaining.length > 0) {
-        statusDiv.innerHTML = '<span style="color: #667eea;">⏳ Optimizing to eliminate remaining letters...</span>';
-
-        // Check if we can use remaining letters by incorporating them into target words
-        // This means finding alternative word combinations that consume these letters
-        for (let stageIdx = stages.length - 1; stageIdx >= 0; stageIdx--) {
-            const stage = stages[stageIdx];
-            const targetWithRemaining = stage.targetWord + finalRemaining;
-
-            // Try to find word combinations that make a superset including remaining letters
-            const availableLetters = stageIdx > 0 ? stages[stageIdx - 1].remainingLetters : (stage.letterPool || '');
-
-            // Look for combinations that use the remaining letters too
-            let foundBetter = false;
-            for (let mode = 1; mode <= 3; mode++) {
-                const combinations = await findWordCombinations(
-                    targetWithRemaining,
-                    availableLetters,
-                    mode,
-                    mode,
-                    2,
-                    10,
-                    false,
-                    null
-                );
-
-                // Find one that uses exactly target + remaining
-                for (const combo of combinations) {
-                    const comboLetters = combo.words.join('');
-                    const allLetters = availableLetters + comboLetters;
-
-                    if (canMakeWord(targetWithRemaining, allLetters)) {
-                        const newRemaining = subtractLetters(allLetters, targetWithRemaining);
-
-                        // If this reduces remaining letters, use it
-                        if (newRemaining.length < finalRemaining.length) {
-                            stage.sourceWords = [...combo.words];
-                            stage.remainingLetters = subtractLetters(allLetters, stage.targetWord);
-
-                            // Update subsequent stages
-                            for (let j = stageIdx + 1; j < stages.length; j++) {
-                                stages[j].letterPool = stages[j - 1].remainingLetters;
-                                const stageLetters = stages[j].letterPool + stages[j].sourceWords.join('');
-                                stages[j].remainingLetters = subtractLetters(stageLetters, stages[j].targetWord);
-                            }
-
-                            finalRemaining = stages[stages.length - 1].remainingLetters;
-                            foundBetter = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (foundBetter) break;
-            }
-
-            if (finalRemaining.length === 0) break;
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-
+    if (!result) {
         renderPuzzleBuilder();
+        statusDiv.innerHTML = '<span style="color: #dc2626;">⚠️ Unable to generate a puzzle with these targets. Try adjusting the words.</span>';
+        setTimeout(() => statusDiv.innerHTML = '', 6000);
+        return;
     }
 
-    // Show completion message
-    if (finalRemaining.length === 0) {
+    const plan = result.stages;
+    if (!plan || plan.length !== stages.length) {
+        renderPuzzleBuilder();
+        statusDiv.innerHTML = '<span style="color: #dc2626;">⚠️ Unexpected error while generating puzzle.</span>';
+        setTimeout(() => statusDiv.innerHTML = '', 6000);
+        return;
+    }
+
+    let totalRandomLetters = 0;
+    for (let i = 0; i < stages.length; i++) {
+        const stage = stages[i];
+        const planStage = plan[i];
+        stage.sourceWords = [...planStage.sourceWords];
+        stage.randomLetters = planStage.randomLetters || '';
+        stage.letterPool = planStage.letterPool || '';
+        const allLetters = stage.letterPool + stage.sourceWords.join('');
+        stage.complete = canMakeWord(stage.targetWord, allLetters);
+        stage.remainingLetters = subtractLetters(allLetters, stage.targetWord);
+        if (i < stages.length - 1) {
+            stages[i + 1].letterPool = stage.remainingLetters;
+        }
+        totalRandomLetters += stage.randomLetters.length;
+    }
+
+    renderPuzzleBuilder();
+
+    const finalRemaining = stages[stages.length - 1].remainingLetters;
+    if (result.success) {
         if (totalRandomLetters === 0) {
             statusDiv.innerHTML = '<span style="color: #28a745;">✓ Perfect puzzle generated with no random letters!</span>';
         } else {
-            statusDiv.innerHTML = `<span style="color: #28a745;">✓ Perfect puzzle generated with ${totalRandomLetters} random letter${totalRandomLetters > 1 ? 's' : ''}</span>`;
+            statusDiv.innerHTML = `<span style="color: #28a745;">✓ Perfect puzzle generated with ${totalRandomLetters} random letter${totalRandomLetters === 1 ? '' : 's'}</span>`;
         }
     } else {
-        statusDiv.innerHTML = `<span style="color: #ffc107;">⚠️ Puzzle generated but ${finalRemaining.length} letter${finalRemaining.length > 1 ? 's' : ''} remaining: ${finalRemaining.toUpperCase()}. Try different target words.</span>`;
+        statusDiv.innerHTML = `<span style="color: #ffc107;">⚠️ Best attempt leaves ${finalRemaining.length} letter${finalRemaining.length === 1 ? '' : 's'} remaining: ${finalRemaining.toUpperCase()}</span>`;
     }
 
     setTimeout(() => statusDiv.innerHTML = '', 8000);
