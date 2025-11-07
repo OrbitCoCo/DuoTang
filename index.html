@@ -56,6 +56,16 @@
                     <!-- Dynamically populated stages will go here -->
                 </div>
 
+                <div style="margin: 20px 0; padding: 16px; background: #e8f4f2; border: 3px solid var(--persian-green); border-radius: 15px; text-align: center;">
+                    <button id="btn-auto-generate" class="btn btn-primary" onclick="autoGeneratePuzzle()" style="font-size: 15px; padding: 10px 24px;">
+                        ✨ Auto Generate Puzzle
+                    </button>
+                    <div style="font-size: 12px; color: #666; margin-top: 8px;">
+                        Fill in target words, then click to auto-generate source words for all stages
+                    </div>
+                    <div id="auto-generate-status" style="margin-top: 12px; font-size: 13px; font-weight: 600;"></div>
+                </div>
+
                 <div id="puzzle-summary" class="summary-panel" style="display: none;">
                     <h3>Puzzle Summary</h3>
                     <div id="summary-content"></div>
