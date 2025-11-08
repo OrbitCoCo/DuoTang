@@ -132,6 +132,40 @@ function subtractLetters(pool, word) {
     return result;
 }
 
+function getFutureLetterCountsForStage(stageIndex) {
+    const counts = {};
+    for (let i = stageIndex + 1; i < stages.length; i++) {
+        const futureStage = stages[i];
+        if (!futureStage.targetWord) continue;
+        for (const letter of futureStage.targetWord.toLowerCase()) {
+            counts[letter] = (counts[letter] || 0) + 1;
+        }
+    }
+    return counts;
+}
+
+function getRemainingLetterCountsAfterTarget(allCounts, targetCounts) {
+    const remaining = {};
+    for (const [letter, total] of Object.entries(allCounts)) {
+        const leftover = total - (targetCounts[letter] || 0);
+        if (leftover > 0) {
+            remaining[letter] = leftover;
+        }
+    }
+    return remaining;
+}
+
+function hasExcessRelativeToFuture(remainingCounts, futureCounts, baselineCounts = null) {
+    for (const [letter, count] of Object.entries(remainingCounts)) {
+        const futureNeed = futureCounts[letter] || 0;
+        const baselineCount = baselineCounts ? (baselineCounts[letter] || 0) : 0;
+        if (count > futureNeed && count > baselineCount) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function findAnagrams(letters, exactMatch = false) {
     const results = [];
 
@@ -152,7 +186,7 @@ function findAnagrams(letters, exactMatch = false) {
     }
 }
 
-async function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false, progressCallback = null, maxMissingLetters = 0) {
+async function findWordCombinations(targetWord, availableLetters = '', minWords = 1, maxWords = 3, minLength = 2, maxLength = 7, includeIncomplete = false, progressCallback = null, maxMissingLetters = 0, options = {}) {
     const combinations = [];
     const targetLen = targetWord.length;
     const targetCountsArrayFull = getLetterCountsArray(targetWord);
@@ -186,69 +220,164 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
 
     // Get unique letters from target word for fallback filtering
     const targetLetters = new Set(targetWord.toLowerCase().split(''));
+    const missingLettersList = Array.from(missingLetters);
+    const futureLetterList = (options.futureLetters || []).map(letter => letter ? letter.toLowerCase() : letter).filter(Boolean);
+    const futureLetterSet = new Set(futureLetterList);
+    const additionalLetterList = (options.additionalFirstLetters || []).map(letter => letter ? letter.toLowerCase() : letter).filter(Boolean);
+
+    const firstLetterPool = [];
+    const seenFirstLetters = new Set();
+    const pushFirstLetter = (letter) => {
+        if (!letter) return;
+        const lower = letter.toLowerCase();
+        if (!seenFirstLetters.has(lower)) {
+            seenFirstLetters.add(lower);
+            firstLetterPool.push(lower);
+        }
+    };
+
+    // Prioritize letters that help now, then future needs, then the full target set
+    missingLettersList.forEach(pushFirstLetter);
+    futureLetterList.forEach(pushFirstLetter);
+    targetLetters.forEach(pushFirstLetter);
+    additionalLetterList.forEach(pushFirstLetter);
+
+    if (firstLetterPool.length === 0 && targetWord) {
+        pushFirstLetter(targetWord[0]);
+    }
 
     // OPTIMIZED: Use First Letter + Length Index to reduce search space
     // Instead of checking all words, only check words that:
     // 1. Start with a letter from the target word
     // 2. Match the length criteria
     const targetLower = targetWord.toLowerCase();
-    const relevantWords = [];
+    const letterBuckets = [];
 
-    // Iterate through letters in target word
-    for (const firstLetter of targetLetters) {
+    const maxWordsPerLetter = includeIncomplete ? 80 : 150;
+    const maxCandidatesPerLetter = maxWordsPerLetter * 4;
+
+    for (const firstLetter of firstLetterPool) {
         const wordsWithLetter = currentFirstLetterLengthIndex[firstLetter];
         if (!wordsWithLetter) continue;
 
+        const bucketCandidates = [];
+
         // Check each length in range
         for (let length = minLength; length <= maxLength; length++) {
+            if (bucketCandidates.length >= maxCandidatesPerLetter) break;
             const wordsOfLength = wordsWithLetter[length];
             if (!wordsOfLength) continue;
 
             // Apply additional filters
             for (const w of wordsOfLength) {
+                if (bucketCandidates.length >= maxCandidatesPerLetter) break;
                 // Exclude target word itself
                 if (w.toLowerCase() === targetLower) continue;
                 // Exclude ignored words
                 if (ignoreWords.has(w.toLowerCase())) continue;
 
-                // If we know what letters we're missing, prioritize words that have those letters
-                if (availableLetters && missingLetters.size > 0) {
-                    let hasMissingLetter = false;
-                    for (const letter of w.toLowerCase()) {
+                const wordLower = w.toLowerCase();
+                const coverageStats = (() => {
+                    let missingCoverage = 0;
+                    let targetCoverage = 0;
+                    let extraLetters = 0;
+                    let futureCoverage = 0;
+                    const seenMissing = new Set();
+                    const seenTarget = new Set();
+                    const seenFuture = new Set();
+                    for (const letter of wordLower) {
                         if (missingLetters.has(letter)) {
-                            hasMissingLetter = true;
-                            break;
+                            seenMissing.add(letter);
+                        }
+                        if (targetLetters.has(letter)) {
+                            seenTarget.add(letter);
+                        } else {
+                            extraLetters++;
+                        }
+                        if (futureLetterSet.has(letter)) {
+                            seenFuture.add(letter);
                         }
                     }
+                    missingCoverage = seenMissing.size;
+                    targetCoverage = seenTarget.size;
+                    futureCoverage = seenFuture.size;
+                    return { missingCoverage, targetCoverage, futureCoverage, extraLetters };
+                })();
 
-                    if (hasMissingLetter) {
-                        relevantWords.push(w);
+                const pushCandidate = () => {
+                    bucketCandidates.push({
+                        word: w,
+                        missingCoverage: coverageStats.missingCoverage,
+                        targetCoverage: coverageStats.targetCoverage,
+                        futureCoverage: coverageStats.futureCoverage,
+                        extraLetters: coverageStats.extraLetters,
+                        length: w.length
+                    });
+                };
+
+                // If we know what letters we're missing, prioritize words that have those letters
+                if (availableLetters && missingLetters.size > 0) {
+                    if (coverageStats.missingCoverage > 0) {
+                        pushCandidate();
                         continue;
                     }
 
-                    // If includeIncomplete is true, also include words that don't have missing letters
-                    if (includeIncomplete) {
-                        let hasTargetLetter = false;
-                        for (const letter of w.toLowerCase()) {
-                            if (targetLetters.has(letter)) {
-                                hasTargetLetter = true;
-                                break;
-                            }
-                        }
-                        if (hasTargetLetter) {
-                            relevantWords.push(w);
-                        }
+                    if (includeIncomplete && coverageStats.targetCoverage > 0) {
+                        pushCandidate();
                     }
                 } else {
-                    // Word starts with a letter from target, so it's relevant
-                    relevantWords.push(w);
+                    pushCandidate();
                 }
+            }
+        }
+
+        if (bucketCandidates.length > 0) {
+            bucketCandidates.sort((a, b) => {
+                if (a.missingCoverage !== b.missingCoverage) {
+                    return b.missingCoverage - a.missingCoverage;
+                }
+                if (a.futureCoverage !== b.futureCoverage) {
+                    return b.futureCoverage - a.futureCoverage;
+                }
+                if (a.targetCoverage !== b.targetCoverage) {
+                    return b.targetCoverage - a.targetCoverage;
+                }
+                if (a.extraLetters !== b.extraLetters) {
+                    return a.extraLetters - b.extraLetters;
+                }
+                if (a.length !== b.length) {
+                    return a.length - b.length;
+                }
+                return a.word.localeCompare(b.word);
+            });
+
+            const trimmedBucket = bucketCandidates
+                .slice(0, maxWordsPerLetter)
+                .map(item => item.word);
+
+            if (trimmedBucket.length > 0) {
+                letterBuckets.push(trimmedBucket);
             }
         }
     }
 
-    // Shuffle relevant words to get diverse results across alphabet (but not when including incomplete)
-    const shuffled = includeIncomplete ? relevantWords : [...relevantWords].sort(() => Math.random() - 0.5);
+    // Interleave buckets so every starting letter gets surfaced before we hit limits
+    const interleavedWords = [];
+    let bucketIndex = 0;
+    let added = true;
+    while (added) {
+        added = false;
+        for (const bucket of letterBuckets) {
+            if (bucketIndex < bucket.length) {
+                interleavedWords.push(bucket[bucketIndex]);
+                added = true;
+            }
+        }
+        bucketIndex++;
+    }
+
+    // Shuffle when looking for complete words only
+    const shuffled = includeIncomplete ? interleavedWords : [...interleavedWords].sort(() => Math.random() - 0.5);
 
     // Find single words that, combined with available letters, make the target
     if (minWords <= 1) {
@@ -1108,6 +1237,8 @@ async function showSuggestions(stageIndex, mode = 'single') {
         // Get letters from already-selected source words
         const existingWords = stage.sourceWords.join('');
         const allExistingLetters = availableLetters + existingWords;
+        const futureCounts = getFutureLetterCountsForStage(stageIndex);
+        const futureLettersForSearch = Object.keys(futureCounts);
 
         // Get global filter values
         const minLengthInput = document.getElementById('global-min-length');
@@ -1155,13 +1286,8 @@ async function showSuggestions(stageIndex, mode = 'single') {
             let finalCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
 
             const targetCounts = getLetterCounts(stage.targetWord);
-            const futureLetters = new Set();
-            for (let i = stageIndex + 1; i < stages.length; i++) {
-                if (stages[i].targetWord) {
-                    stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
-                }
-            }
-            const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
+            const existingCounts = getLetterCounts(allExistingLetters);
+            const baselineRemainingCounts = getRemainingLetterCountsAfterTarget(existingCounts, targetCounts);
 
             finalCombinations = finalCombinations.filter(comboObj => {
                 const comboLetters = comboObj.words.join('');
@@ -1180,10 +1306,9 @@ async function showSuggestions(stageIndex, mode = 'single') {
 
                 // No excess filter
                 if (noExcessToggle && noExcessToggle.checked) {
-                    for (const letter of comboLetters.toLowerCase()) {
-                        if (!targetLetters.has(letter) && !futureLetters.has(letter)) {
-                            return false;
-                        }
+                    const remainingCounts = getRemainingLetterCountsAfterTarget(allCounts, targetCounts);
+                    if (hasExcessRelativeToFuture(remainingCounts, futureCounts, baselineRemainingCounts)) {
+                        return false;
                     }
                 }
 
@@ -1196,7 +1321,18 @@ async function showSuggestions(stageIndex, mode = 'single') {
             renderSuggestions(stageIndex, mode);
         };
 
-        const combinations = await findWordCombinations(stage.targetWord, allExistingLetters, minWords, maxWords, minLength, maxLength, includeIncomplete, progressCallback);
+        const combinations = await findWordCombinations(
+            stage.targetWord,
+            allExistingLetters,
+            minWords,
+            maxWords,
+            minLength,
+            maxLength,
+            includeIncomplete,
+            progressCallback,
+            0,
+            {futureLetters: futureLettersForSearch}
+        );
 
         stage.searchInProgress = false;
 
@@ -1218,13 +1354,8 @@ async function showSuggestions(stageIndex, mode = 'single') {
         let finalCombinations = defaultSort ? stage.sortedCombinations : stage.unsortedCombinations;
 
         const targetCounts = getLetterCounts(stage.targetWord);
-        const futureLetters = new Set();
-        for (let i = stageIndex + 1; i < stages.length; i++) {
-            if (stages[i].targetWord) {
-                stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
-            }
-        }
-        const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
+        const existingCounts = getLetterCounts(allExistingLetters);
+        const baselineRemainingCounts = getRemainingLetterCountsAfterTarget(existingCounts, targetCounts);
 
         finalCombinations = finalCombinations.filter(comboObj => {
             const comboLetters = comboObj.words.join('');
@@ -1243,10 +1374,9 @@ async function showSuggestions(stageIndex, mode = 'single') {
 
             // No excess filter
             if (noExcessToggle && noExcessToggle.checked) {
-                for (const letter of comboLetters.toLowerCase()) {
-                    if (!targetLetters.has(letter) && !futureLetters.has(letter)) {
-                        return false;
-                    }
+                const remainingCounts = getRemainingLetterCountsAfterTarget(allCounts, targetCounts);
+                if (hasExcessRelativeToFuture(remainingCounts, futureCounts, baselineRemainingCounts)) {
+                    return false;
                 }
             }
 
@@ -1424,15 +1554,9 @@ function applyFilters(stageIndex) {
         const availableLetters = stage.letterPool || '';
         const allExistingLetters = availableLetters + existingWords;
         const targetCounts = getLetterCounts(stage.targetWord);
-
-        // Get future target letters for no-excess filter
-        const futureLetters = new Set();
-        for (let i = stageIndex + 1; i < stages.length; i++) {
-            if (stages[i].targetWord) {
-                stages[i].targetWord.toLowerCase().split('').forEach(letter => futureLetters.add(letter));
-            }
-        }
-        const targetLetters = new Set(stage.targetWord.toLowerCase().split(''));
+        const futureCounts = getFutureLetterCountsForStage(stageIndex);
+        const existingCounts = getLetterCounts(allExistingLetters);
+        const baselineRemainingCounts = getRemainingLetterCountsAfterTarget(existingCounts, targetCounts);
 
         // Apply both filters
         stage.currentCombinations = baseSource.filter(comboObj => {
@@ -1452,10 +1576,9 @@ function applyFilters(stageIndex) {
 
             // No excess filter: no letters that would be red (not in current or future targets)
             if (noExcessToggle && noExcessToggle.checked) {
-                for (const letter of comboLetters.toLowerCase()) {
-                    if (!targetLetters.has(letter) && !futureLetters.has(letter)) {
-                        return false; // Has red (unneeded) letter
-                    }
+                const remainingCounts = getRemainingLetterCountsAfterTarget(allCounts, targetCounts);
+                if (hasExcessRelativeToFuture(remainingCounts, futureCounts, baselineRemainingCounts)) {
+                    return false; // Leaves additional letters that future targets will never use
                 }
             }
 
@@ -1853,6 +1976,14 @@ class PuzzleAutoSolver {
             const stage = this.stageData[index];
             const availableCounts = getLetterCountsArray(availableLetters);
             const targetCounts = this.stageTargetCounts[index];
+            const futureCountsArray = this.futureNeeds[index] || new Uint16Array(26);
+            const futureLettersForSearch = [];
+            for (let i = 0; i < 26; i++) {
+                if (futureCountsArray[i] > 0) {
+                    futureLettersForSearch.push(String.fromCharCode(97 + i));
+                }
+            }
+
             const combos = await findWordCombinations(
                 stage.targetWord,
                 availableLetters,
@@ -1862,10 +1993,10 @@ class PuzzleAutoSolver {
                 10,
                 false,
                 null,
-                this.config.maxRandomLettersPerStage
+                this.config.maxRandomLettersPerStage,
+                {futureLetters: futureLettersForSearch}
             ) || [];
 
-            const futureCounts = this.futureNeeds[index] || new Uint16Array(26);
             const candidateMap = new Map();
 
             const addCandidateFromWords = (words = []) => {
@@ -1898,7 +2029,7 @@ class PuzzleAutoSolver {
                     return;
                 }
 
-                const score = this.computeCandidateScore(remainingCounts, futureCounts, randomLetters.length);
+                const score = this.computeCandidateScore(remainingCounts, futureCountsArray, randomLetters.length);
                 const candidateKey = `${remainingLetters}|${randomLetters.length}`;
                 const letterPool = sortString(availableLetters + randomLetters);
                 const candidate = {
