@@ -191,6 +191,8 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
     const targetLen = targetWord.length;
     const targetCountsArrayFull = getLetterCountsArray(targetWord);
     const allowMissing = includeIncomplete || maxMissingLetters > 0;
+    const searchMode = options.mode || 'single';
+    const isCombinationMode = searchMode === 'combo';
 
     // If we have available letters from previous stage, check if they alone can make the target
     if (availableLetters && canMakeWord(targetWord, availableLetters)) {
@@ -253,8 +255,8 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
     const targetLower = targetWord.toLowerCase();
     const letterBuckets = [];
 
-    const maxWordsPerLetter = includeIncomplete ? 80 : 150;
-    const maxCandidatesPerLetter = maxWordsPerLetter * 4;
+    const maxWordsPerLetter = includeIncomplete ? 80 : (isCombinationMode ? 60 : 150);
+    const maxCandidatesPerLetter = includeIncomplete ? maxWordsPerLetter * 4 : (isCombinationMode ? maxWordsPerLetter * 2 : maxWordsPerLetter * 4);
 
     for (const firstLetter of firstLetterPool) {
         const wordsWithLetter = currentFirstLetterLengthIndex[firstLetter];
@@ -390,17 +392,11 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
             if (isComplete) {
                 combinations.push({words: [word], complete: true, missingCount: 0});
                 if (progressCallback) progressCallback([...combinations]);
-                if (combinations.length >= 200) return combinations;
             } else if (allowMissing) {
                 if (!includeIncomplete && missingTotal > maxMissingLetters) continue;
                 combinations.push({words: [word], complete: false, missingCount: missingTotal});
                 if (includeIncomplete && progressCallback && combinations.length % 50 === 0) {
                     progressCallback([...combinations]);
-                }
-                if (includeIncomplete) {
-                    if (combinations.length >= 500) return combinations;
-                } else if (combinations.length >= 200) {
-                    return combinations;
                 }
             }
         }
@@ -497,10 +493,9 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
                         progressCallback([...combinations]);
                         lastUpdate = combinations.length;
                     }
-                    if (includeIncomplete) {
-                        if (combinations.length >= 500) return combinations;
-                    } else if (combinations.length >= 200) {
-                        return combinations;
+                    if (includeIncomplete && progressCallback && combinations.length - lastUpdate >= 50) {
+                        progressCallback([...combinations]);
+                        lastUpdate = combinations.length;
                     }
                 }
 
@@ -532,17 +527,9 @@ async function findWordCombinations(targetWord, availableLetters = '', minWords 
 
                         if (isComplete) {
                             combinations.push({words: [word1, word2, word3], complete: true, missingCount: 0});
-                            if (combinations.length >= 200) {
-                                return combinations;
-                            }
                         } else if (allowMissing) {
                             if (!includeIncomplete && missingTotal > maxMissingLetters) continue;
                             combinations.push({words: [word1, word2, word3], complete: false, missingCount: missingTotal});
-                            if (includeIncomplete) {
-                                if (combinations.length >= 500) return combinations;
-                            } else if (combinations.length >= 200) {
-                                return combinations;
-                            }
                         }
                     }
                 }
@@ -1270,9 +1257,28 @@ async function showSuggestions(stageIndex, mode = 'single') {
         stage.currentMode = mode;
         stage.searchInProgress = true;
 
+        const throttleProgress = mode === 'combo';
+        const progressThrottleMs = 250;
+        const progressMinDelta = 200;
+        let lastProgressUpdateTime = 0;
+        let lastProgressUpdateCount = 0;
+
         // Progress callback to render results as they're found
         const progressCallback = (currentCombinations) => {
             if (currentCombinations.length === 0) return;
+
+            if (throttleProgress) {
+                const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+                    ? performance.now()
+                    : Date.now();
+                const timeSinceLast = now - lastProgressUpdateTime;
+                const countDelta = currentCombinations.length - lastProgressUpdateCount;
+                if (lastProgressUpdateTime !== 0 && timeSinceLast < progressThrottleMs && countDelta < progressMinDelta) {
+                    return;
+                }
+                lastProgressUpdateTime = now;
+                lastProgressUpdateCount = currentCombinations.length;
+            }
 
             // Store both sorted and unsorted versions
             stage.unsortedCombinations = currentCombinations;
@@ -1331,7 +1337,7 @@ async function showSuggestions(stageIndex, mode = 'single') {
             includeIncomplete,
             progressCallback,
             0,
-            {futureLetters: futureLettersForSearch}
+            {futureLetters: futureLettersForSearch, mode}
         );
 
         stage.searchInProgress = false;
