@@ -1757,7 +1757,8 @@ function updateSummary() {
 
         html += `
             <div style="margin-top: 20px;">
-                <button class="btn btn-primary" onclick="exportPuzzle()">Export Puzzle Data</button>
+                <button class="btn btn-primary" onclick="sharePuzzle()">Share Puzzle</button>
+                <button class="btn btn-secondary" style="margin-left: 8px;" onclick="exportPlainText()">Export Plain Text</button>
                 <button class="btn btn-secondary" style="margin-left: 8px;" onclick="startOver()">Start Over</button>
             </div>
         `;
@@ -1768,32 +1769,125 @@ function updateSummary() {
     summaryDiv.innerHTML = html;
 }
 
-function exportPuzzle() {
-    const puzzleData = {
-        targetWords: targetWords,
-        stages: stages.map(s => ({
-            targetWord: s.targetWord,
-            sourceWords: s.sourceWords,
-            remainingLetters: s.remainingLetters
-        }))
-    };
+function sharePuzzle() {
+    // Create comprehensive shareable text
+    const lastStage = stages[stages.length - 1];
+    const finalLettersRemaining = lastStage.remainingLetters;
+    const isPerfect = finalLettersRemaining.length === 0;
 
-    const json = JSON.stringify(puzzleData, null, 2);
+    // Count total random letters
+    const totalRandomLetters = stages.reduce((sum, stage) => {
+        return sum + (stage.randomLetters ? stage.randomLetters.length : 0);
+    }, 0);
+
+    let shareText = `DuoTang Puzzle 🧩\n`;
+    shareText += `${stages.length} stage${stages.length === 1 ? '' : 's'}`;
+
+    if (isPerfect) {
+        shareText += ` | Perfect!`;
+    } else {
+        shareText += ` | ${finalLettersRemaining.length} extra`;
+    }
+
+    if (totalRandomLetters > 0) {
+        shareText += ` | ${totalRandomLetters} random`;
+    }
+
+    shareText += `\n\n`;
+
+    // Add detailed info for each stage
+    stages.forEach((stage, index) => {
+        const stageNum = index + 1;
+        shareText += `Stage ${stageNum}: ${stage.targetWord.toUpperCase()}\n`;
+
+        if (stage.letterPool) {
+            shareText += `  Available: ${stage.letterPool.toUpperCase()}\n`;
+        }
+
+        if (stage.sourceWords.length > 0) {
+            shareText += `  Words: ${stage.sourceWords.join(', ')}\n`;
+        } else {
+            shareText += `  Words: (none)\n`;
+        }
+
+        if (stage.randomLetters) {
+            shareText += `  Random: ${stage.randomLetters.toUpperCase()}\n`;
+        }
+
+        if (stage.remainingLetters) {
+            shareText += `  Remaining: ${stage.remainingLetters.toUpperCase()}\n`;
+        }
+
+        shareText += `\n`;
+    });
+
+    if (!isPerfect) {
+        shareText += `Final Remaining: ${finalLettersRemaining.toUpperCase()}`;
+    }
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(shareText).then(() => {
+        alert('Puzzle copied to clipboard!\n\n' + shareText);
+    }).catch(() => {
+        alert('Puzzle ready to share:\n\n' + shareText);
+    });
+}
+
+function exportPlainText() {
+    // Create detailed plain text export
+    let plainText = `DuoTang Puzzle\n`;
+    plainText += `=`.repeat(50) + `\n\n`;
+
+    const lastStage = stages[stages.length - 1];
+    const finalLettersRemaining = lastStage.remainingLetters;
+
+    plainText += `Total Stages: ${stages.length}\n`;
+    plainText += `Status: ${finalLettersRemaining.length === 0 ? 'Perfect (no letters remaining)' : `${finalLettersRemaining.length} letters remaining`}\n\n`;
+
+    stages.forEach((stage, index) => {
+        plainText += `Stage ${index + 1}: ${stage.targetWord.toUpperCase()}\n`;
+        plainText += `-`.repeat(30) + `\n`;
+
+        if (stage.sourceWords.length > 0) {
+            plainText += `Source Words: ${stage.sourceWords.join(', ')}\n`;
+        } else {
+            plainText += `Source Words: (none - using available letters only)\n`;
+        }
+
+        if (stage.letterPool) {
+            plainText += `Available Letters: ${stage.letterPool.toUpperCase()}\n`;
+        }
+
+        if (stage.randomLetters) {
+            plainText += `Random Letters: ${stage.randomLetters.toUpperCase()} (${stage.randomLetters.length})\n`;
+        }
+
+        if (stage.remainingLetters) {
+            plainText += `Remaining: ${stage.remainingLetters.toUpperCase()}\n`;
+        }
+
+        plainText += `\n`;
+    });
+
+    if (finalLettersRemaining.length > 0) {
+        plainText += `Final Remaining Letters: ${finalLettersRemaining.toUpperCase()}\n`;
+    }
 
     // Create download link
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = new Blob([plainText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'word-puzzle.json';
+    a.download = 'duotang-puzzle.txt';
     a.click();
     URL.revokeObjectURL(url);
 
-    // Also show in alert for copying
-    alert('Puzzle data exported! Also copying to clipboard...\n\n' + json);
-    navigator.clipboard.writeText(json).catch(() => {
-        console.log('Could not copy to clipboard');
-    });
+    // Also show confirmation
+    const statusDiv = document.getElementById('auto-generate-status');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<span style="color: #28a745;">✓ Puzzle exported as plain text file</span>';
+        setTimeout(() => statusDiv.innerHTML = '', 3000);
+    }
 }
 
 function startOver() {
