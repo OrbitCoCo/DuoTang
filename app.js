@@ -672,6 +672,7 @@ function renderPuzzleBuilder() {
     container.appendChild(addButton);
 
     updateSummary();
+    updateWordBrowser();
 }
 
 function buildLetterTiles(stage, stageIndex) {
@@ -1903,6 +1904,249 @@ function startOver() {
 
         renderPuzzleBuilder();
     }
+}
+
+// Word Browser Functions
+let wordBrowserState = {
+    allLetters: '',
+    currentResults: [],
+    unfilteredResults: [],
+    resultsShown: 0,
+    searching: false,
+    currentMode: null
+};
+
+function updateWordBrowser() {
+    const browserDiv = document.getElementById('word-browser');
+    if (!browserDiv) return;
+
+    // Get all target words
+    const allTargetWords = stages.map(s => s.targetWord).filter(w => w);
+
+    if (allTargetWords.length === 0) {
+        browserDiv.style.display = 'none';
+        return;
+    }
+
+    // Combine all letters from target words
+    const allLetters = allTargetWords.join('').toLowerCase();
+    wordBrowserState.allLetters = allLetters;
+
+    browserDiv.style.display = 'block';
+
+    const letterCounts = getLetterCounts(allLetters);
+    const lettersList = Object.entries(letterCounts)
+        .map(([letter, count]) => `${letter.toUpperCase()}(${count})`)
+        .join(' ');
+
+    document.getElementById('browser-letters').innerHTML = `
+        <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+            All target letters: <strong style="color: var(--charcoal);">${allLetters.toUpperCase()}</strong>
+        </div>
+        <div style="font-size: 11px; color: #888;">
+            ${lettersList}
+        </div>
+    `;
+}
+
+async function browseWords(mode) {
+    const resultsDiv = document.getElementById('browser-results');
+    const allLetters = wordBrowserState.allLetters;
+
+    if (!allLetters) {
+        resultsDiv.innerHTML = '<p style="padding: 12px; color: #666;">No target words set yet.</p>';
+        return;
+    }
+
+    resultsDiv.style.display = 'block';
+    const searchText = mode === 'single' ? 'Searching for single words...' : 'Searching for combinations...';
+    resultsDiv.innerHTML = `<p style="padding: 12px; color: #666;">${searchText}</p>`;
+
+    wordBrowserState.searching = true;
+    wordBrowserState.currentMode = mode;
+
+    setTimeout(async () => {
+        const minLengthInput = document.getElementById('browser-min-length');
+        const maxLengthInput = document.getElementById('browser-max-length');
+        const minLength = minLengthInput ? parseInt(minLengthInput.value) || 2 : 2;
+        const maxLength = maxLengthInput ? parseInt(maxLengthInput.value) || 10 : 10;
+
+        let results = [];
+
+        if (mode === 'single') {
+            // Find all single words that can be made from the letters
+            const letterCounts = getLetterCounts(allLetters);
+            for (const word of currentWordList) {
+                if (word.length < minLength || word.length > maxLength) continue;
+                if (canMakeWord(word, allLetters)) {
+                    results.push({ words: [word], complete: true, missingCount: 0 });
+                }
+            }
+        } else {
+            // Find combinations of 2-3 words that can be made from the letters
+            const validWords = currentWordList.filter(word => {
+                return word.length >= minLength && word.length <= maxLength && canMakeWord(word, allLetters);
+            });
+
+            // Limit to first 500 words to keep it reasonable
+            const wordsToSearch = validWords.slice(0, 500);
+
+            // Find pairs
+            for (let i = 0; i < wordsToSearch.length; i++) {
+                for (let j = i + 1; j < wordsToSearch.length; j++) {
+                    const combo = wordsToSearch[i] + wordsToSearch[j];
+                    if (canMakeWord(combo, allLetters)) {
+                        results.push({ words: [wordsToSearch[i], wordsToSearch[j]], complete: true, missingCount: 0 });
+                    }
+                }
+            }
+
+            // Find triplets (limit search more for performance)
+            const shortWords = wordsToSearch.filter(w => w.length <= 5).slice(0, 100);
+            for (let i = 0; i < shortWords.length; i++) {
+                for (let j = i + 1; j < shortWords.length; j++) {
+                    for (let k = j + 1; k < shortWords.length; k++) {
+                        const combo = shortWords[i] + shortWords[j] + shortWords[k];
+                        if (canMakeWord(combo, allLetters)) {
+                            results.push({ words: [shortWords[i], shortWords[j], shortWords[k]], complete: true, missingCount: 0 });
+                        }
+                    }
+                }
+            }
+        }
+
+        wordBrowserState.searching = false;
+        wordBrowserState.unfilteredResults = results;
+        wordBrowserState.currentResults = filterAndSortBrowserResults(results);
+        wordBrowserState.resultsShown = 0;
+
+        if (wordBrowserState.currentResults.length === 0) {
+            const message = mode === 'single'
+                ? 'No single words found.'
+                : 'No combinations found.';
+            resultsDiv.innerHTML = `<p style="padding: 12px; color: #666;">${message}</p>`;
+            return;
+        }
+
+        renderBrowserResults(mode);
+    }, 10);
+}
+
+function filterAndSortBrowserResults(results) {
+    const minLengthInput = document.getElementById('browser-min-length');
+    const maxLengthInput = document.getElementById('browser-max-length');
+    const firstLetterSelect = document.getElementById('browser-first-letter');
+    const sortAlphaCheckbox = document.getElementById('browser-sort-alpha');
+
+    const minLength = minLengthInput ? parseInt(minLengthInput.value) || 2 : 2;
+    const maxLength = maxLengthInput ? parseInt(maxLengthInput.value) || 10 : 10;
+    const firstLetter = firstLetterSelect ? firstLetterSelect.value : '';
+    const sortAlpha = sortAlphaCheckbox ? sortAlphaCheckbox.checked : false;
+
+    // Filter by length and first letter
+    let filtered = results.filter(comboObj => {
+        const firstWord = comboObj.words[0] || '';
+        const wordLength = firstWord.length;
+
+        // Check length
+        if (wordLength < minLength || wordLength > maxLength) {
+            return false;
+        }
+
+        // Check first letter
+        if (firstLetter && firstWord[0].toLowerCase() !== firstLetter.toLowerCase()) {
+            return false;
+        }
+
+        return true;
+    });
+
+    // Sort alphabetically if requested
+    if (sortAlpha) {
+        filtered.sort((a, b) => {
+            const aText = a.words.join(' ').toLowerCase();
+            const bText = b.words.join(' ').toLowerCase();
+            return aText.localeCompare(bText);
+        });
+    }
+
+    return filtered;
+}
+
+function applyBrowserFilters() {
+    if (wordBrowserState.unfilteredResults.length === 0) {
+        return;
+    }
+
+    wordBrowserState.currentResults = filterAndSortBrowserResults(wordBrowserState.unfilteredResults);
+    wordBrowserState.resultsShown = 0;
+
+    const resultsDiv = document.getElementById('browser-results');
+    if (wordBrowserState.currentResults.length === 0) {
+        resultsDiv.innerHTML = '<p style="padding: 12px; color: #666;">No results match the current filters.</p>';
+        return;
+    }
+
+    renderBrowserResults(wordBrowserState.currentMode);
+}
+
+function renderBrowserResults(mode) {
+    const resultsDiv = document.getElementById('browser-results');
+    const combinations = wordBrowserState.currentResults;
+    const batchSize = 200;
+    const startIndex = wordBrowserState.resultsShown;
+    const endIndex = Math.min(startIndex + batchSize, combinations.length);
+    const batch = combinations.slice(startIndex, endIndex);
+
+    const itemsHTML = batch.map(comboObj => {
+        let comboText;
+        if (comboObj.words.length > 0) {
+            comboText = comboObj.words.join(' + ');
+        } else {
+            comboText = '(exact match)';
+        }
+        return `<div class="suggestion-item" style="cursor: default;">${comboText}</div>`;
+    }).join('');
+
+    const hasMore = endIndex < combinations.length;
+    const countText = `Showing ${endIndex} of ${combinations.length} ${mode === 'single' ? 'words' : 'combinations'}`;
+
+    if (startIndex === 0) {
+        resultsDiv.innerHTML = `
+            <p style="padding: 8px; color: var(--charcoal); font-weight: 600; font-size: 12px; margin-bottom: 8px;">
+                ${mode === 'single' ? 'Single words you can make:' : 'Word combinations you can make:'}
+            </p>
+            <div id="browser-items" style="display: contents;">${itemsHTML}</div>
+            ${hasMore ? `
+                <div id="browser-load-more" style="grid-column: 1/-1; margin-top: 8px; text-align: center;">
+                    <p style="font-size: 11px; color: #666; margin-bottom: 8px;">${countText}</p>
+                    <button class="btn btn-secondary btn-small" onclick="loadMoreBrowserResults('${mode}')" style="padding: 6px 16px;">Load More</button>
+                </div>
+            ` : `
+                <p style="grid-column: 1/-1; margin-top: 8px; font-size: 11px; color: #666; text-align: center;">${countText}</p>
+            `}
+        `;
+    } else {
+        const itemsContainer = document.getElementById('browser-items');
+        itemsContainer.insertAdjacentHTML('beforeend', itemsHTML);
+
+        const loadMoreContainer = document.getElementById('browser-load-more');
+        if (hasMore) {
+            loadMoreContainer.querySelector('p').textContent = countText;
+        } else {
+            loadMoreContainer.innerHTML = `<p style="font-size: 11px; color: #666; text-align: center;">${countText}</p>`;
+        }
+    }
+
+    wordBrowserState.resultsShown = endIndex;
+}
+
+function loadMoreBrowserResults(mode) {
+    renderBrowserResults(mode);
+}
+
+function hideBrowserResults() {
+    document.getElementById('browser-results').style.display = 'none';
 }
 
 function clearSourceWords() {

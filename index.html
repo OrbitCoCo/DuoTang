@@ -76,6 +76,53 @@
                     <h3>Puzzle Summary</h3>
                     <div id="summary-content"></div>
                 </div>
+
+                <div id="word-browser" style="display: none; margin-top: 24px; padding: 16px; background: #f9f9f9; border: 2px solid var(--persian-green); border-radius: 12px;">
+                    <h3 style="margin: 0 0 12px 0; color: var(--charcoal);">Word Browser</h3>
+                    <div id="browser-letters"></div>
+
+                    <div style="margin: 12px 0; padding: 12px; background: #fff; border: 2px solid #e0e0e0; border-radius: 8px;">
+                        <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+                            <div style="flex: 0 0 100px;">
+                                <label style="font-size: 12px; color: var(--charcoal); font-weight: 600; display: block; margin-bottom: 4px;">Min Length:</label>
+                                <input type="number" id="browser-min-length" value="2" min="1" max="20"
+                                    style="width: 100%; padding: 6px 8px; font-size: 13px; border: 2px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
+                            </div>
+                            <div style="flex: 0 0 100px;">
+                                <label style="font-size: 12px; color: var(--charcoal); font-weight: 600; display: block; margin-bottom: 4px;">Max Length:</label>
+                                <input type="number" id="browser-max-length" value="10" min="1" max="20"
+                                    style="width: 100%; padding: 6px 8px; font-size: 13px; border: 2px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
+                            </div>
+                            <div style="flex: 0 0 120px;">
+                                <label style="font-size: 12px; color: var(--charcoal); font-weight: 600; display: block; margin-bottom: 4px;">First Letter:</label>
+                                <select id="browser-first-letter" style="width: 100%; padding: 6px 8px; font-size: 13px; border: 2px solid var(--persian-green); border-radius: 8px; font-weight: 600;">
+                                    <option value="">All</option>
+                                    <option value="a">A</option><option value="b">B</option><option value="c">C</option><option value="d">D</option>
+                                    <option value="e">E</option><option value="f">F</option><option value="g">G</option><option value="h">H</option>
+                                    <option value="i">I</option><option value="j">J</option><option value="k">K</option><option value="l">L</option>
+                                    <option value="m">M</option><option value="n">N</option><option value="o">O</option><option value="p">P</option>
+                                    <option value="q">Q</option><option value="r">R</option><option value="s">S</option><option value="t">T</option>
+                                    <option value="u">U</option><option value="v">V</option><option value="w">W</option><option value="x">X</option>
+                                    <option value="y">Y</option><option value="z">Z</option>
+                                </select>
+                            </div>
+                            <div style="flex: 0 0 auto;">
+                                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--charcoal); font-weight: 600; cursor: pointer;">
+                                    <input type="checkbox" id="browser-sort-alpha" style="cursor: pointer;">
+                                    <span>Sort Alphabetically</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin: 12px 0; display: flex; gap: 8px;">
+                        <button class="btn btn-secondary" onclick="browseWords('single')">Browse Single Words</button>
+                        <button class="btn btn-secondary" onclick="browseWords('combo')">Browse Combinations</button>
+                        <button class="btn btn-secondary btn-small" onclick="applyBrowserFilters()" style="padding: 6px 12px;">Apply Filters</button>
+                        <button class="btn btn-secondary btn-small" onclick="hideBrowserResults()" style="padding: 6px 12px;">Hide Results</button>
+                    </div>
+                    <div id="browser-results" class="suggestions-list" style="display: none;"></div>
+                </div>
             </section>
         </main>
     </div>
