@@ -739,9 +739,13 @@ function createStageElement(stage, index) {
                 onkeyup="checkTargetWordSpelling(${index})"
                 style="flex: 1; padding: 8px 12px; font-size: 15px; border: 2px solid ${stage.targetWord && !currentWordSet.has(stage.targetWord) ? '#ffc107' : '#e0e0e0'}; border-radius: 4px;"
             >
+            ${index > 0 && stages[index - 1].complete && stages[index - 1].remainingLetters ? `
+                <button class="btn btn-secondary btn-small" onclick="showTargetSuggestions(${index})" title="Suggest target words" style="padding: 4px 8px;">💡</button>
+            ` : ''}
             <span class="stage-status ${statusClass}" style="font-size: 12px;">${index + 1}</span>
             <button class="btn btn-secondary btn-small" onclick="removeStage(${index})" title="Remove stage" style="padding: 4px 8px;">✕</button>
         </div>
+        <div id="target-suggestions-popover-${index}" style="display: none; position: relative; margin-bottom: 12px; background: white; border: 3px solid var(--persian-green); border-radius: 12px; padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100;"></div>
         <div id="target-spell-check-${index}" style="margin-bottom: 8px; font-size: 12px;">
             ${stage.targetWord && !currentWordSet.has(stage.targetWord) ? `
                 <span style="color: #856404;">⚠️ Not in dictionary</span>
@@ -1772,59 +1776,51 @@ function updateSummary() {
 
 function sharePuzzle() {
     // Create comprehensive shareable text
-    const lastStage = stages[stages.length - 1];
-    const finalLettersRemaining = lastStage.remainingLetters;
-    const isPerfect = finalLettersRemaining.length === 0;
-
-    // Count total random letters
-    const totalRandomLetters = stages.reduce((sum, stage) => {
-        return sum + (stage.randomLetters ? stage.randomLetters.length : 0);
-    }, 0);
-
-    let shareText = `DuoTang Puzzle 🧩\n`;
-    shareText += `${stages.length} stage${stages.length === 1 ? '' : 's'}`;
-
-    if (isPerfect) {
-        shareText += ` | Perfect!`;
-    } else {
-        shareText += ` | ${finalLettersRemaining.length} extra`;
-    }
-
-    if (totalRandomLetters > 0) {
-        shareText += ` | ${totalRandomLetters} random`;
-    }
-
-    shareText += `\n\n`;
+    let shareText = '';
 
     // Add detailed info for each stage
     stages.forEach((stage, index) => {
         const stageNum = index + 1;
         shareText += `Stage ${stageNum}: ${stage.targetWord.toUpperCase()}\n`;
 
-        if (stage.letterPool) {
-            shareText += `  Available: ${stage.letterPool.toUpperCase()}\n`;
+        // Show starting letters or carry-over letters
+        if (index === 0 && stage.letterPool) {
+            // First stage - show which letters you start with
+            const carryOver = stage.letterPool.split('').filter(letter => !stage.randomLetters.includes(letter)).join('');
+            const given = stage.randomLetters || '';
+
+            if (carryOver && given) {
+                shareText += `  Starting letters: ${carryOver.toUpperCase()} + ${given.toUpperCase()} (given)\n`;
+            } else if (given) {
+                shareText += `  Starting letters: ${given.toUpperCase()} (given)\n`;
+            } else if (carryOver) {
+                shareText += `  Starting letters: ${carryOver.toUpperCase()}\n`;
+            }
+        } else if (index > 0) {
+            // Other stages - show carry-over and any added letters
+            const prevStage = stages[index - 1];
+            const carryOver = prevStage.remainingLetters || '';
+            const added = stage.randomLetters || '';
+
+            if (carryOver && added) {
+                shareText += `  Letters: ${carryOver.toUpperCase()} + ${added.toUpperCase()} (given)\n`;
+            } else if (added) {
+                shareText += `  Letters: ${added.toUpperCase()} (given)\n`;
+            } else if (carryOver) {
+                shareText += `  Letters: ${carryOver.toUpperCase()}\n`;
+            }
         }
 
         if (stage.sourceWords.length > 0) {
             shareText += `  Words: ${stage.sourceWords.join(', ')}\n`;
-        } else {
-            shareText += `  Words: (none)\n`;
-        }
-
-        if (stage.randomLetters) {
-            shareText += `  Random: ${stage.randomLetters.toUpperCase()}\n`;
         }
 
         if (stage.remainingLetters) {
-            shareText += `  Remaining: ${stage.remainingLetters.toUpperCase()}\n`;
+            shareText += `  Leftover: ${stage.remainingLetters.toUpperCase()}\n`;
         }
 
         shareText += `\n`;
     });
-
-    if (!isPerfect) {
-        shareText += `Final Remaining: ${finalLettersRemaining.toUpperCase()}`;
-    }
 
     // Copy to clipboard
     navigator.clipboard.writeText(shareText).then(() => {
@@ -2147,6 +2143,135 @@ function loadMoreBrowserResults(mode) {
 
 function hideBrowserResults() {
     document.getElementById('browser-results').style.display = 'none';
+}
+
+// Target Word Suggestion Functions
+function showTargetSuggestions(stageIndex) {
+    const popover = document.getElementById(`target-suggestions-popover-${stageIndex}`);
+
+    // Toggle popover
+    if (popover.style.display !== 'none') {
+        popover.style.display = 'none';
+        return;
+    }
+
+    const prevStage = stages[stageIndex - 1];
+    if (!prevStage || !prevStage.remainingLetters) {
+        return;
+    }
+
+    const availableLetters = prevStage.remainingLetters;
+
+    popover.style.display = 'block';
+    popover.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span style="font-size: 13px; font-weight: 600; color: var(--charcoal);">Target Word Suggestions</span>
+            <button class="btn btn-secondary btn-small" onclick="hideTargetSuggestions(${stageIndex})" style="padding: 4px 8px;">✕</button>
+        </div>
+        <div style="font-size: 12px; color: #666; margin-bottom: 12px;">
+            Available letters: <strong>${availableLetters.toUpperCase()}</strong>
+        </div>
+        <div id="target-suggestions-content-${stageIndex}">
+            <p style="color: #666; font-size: 12px;">Searching...</p>
+        </div>
+    `;
+
+    setTimeout(() => {
+        findTargetSuggestions(stageIndex, availableLetters);
+    }, 10);
+}
+
+function hideTargetSuggestions(stageIndex) {
+    const popover = document.getElementById(`target-suggestions-popover-${stageIndex}`);
+    popover.style.display = 'none';
+}
+
+function findTargetSuggestions(stageIndex, availableLetters) {
+    const contentDiv = document.getElementById(`target-suggestions-content-${stageIndex}`);
+
+    // Find exact anagrams
+    const exactMatches = findAnagrams(availableLetters, true);
+
+    // Find words that can be made from these letters
+    const partialMatches = [];
+    const minLength = 2;
+    const maxLength = availableLetters.length;
+
+    for (const word of currentWordList) {
+        if (word.length < minLength || word.length > maxLength) continue;
+        if (exactMatches.includes(word)) continue; // Skip if already in exact matches
+        if (canMakeWord(word, availableLetters)) {
+            partialMatches.push(word);
+        }
+    }
+
+    // Sort both lists alphabetically
+    exactMatches.sort();
+    partialMatches.sort();
+
+    let html = '';
+
+    // Show exact matches
+    if (exactMatches.length > 0) {
+        html += `
+            <div style="margin-bottom: 16px;">
+                <div style="font-size: 12px; font-weight: 600; color: var(--persian-green); margin-bottom: 8px;">
+                    Exact Anagrams (${exactMatches.length})
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 200px; overflow-y: auto;">
+                    ${exactMatches.map(word => `
+                        <div class="suggestion-item" onclick="selectTargetWord(${stageIndex}, '${word}')" style="cursor: pointer; padding: 6px 10px; font-size: 12px;">
+                            ${word}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div style="margin-bottom: 16px;">
+                <div style="font-size: 12px; font-weight: 600; color: #999; margin-bottom: 8px;">
+                    No Exact Anagrams
+                </div>
+            </div>
+        `;
+    }
+
+    // Show partial matches
+    if (partialMatches.length > 0) {
+        const displayCount = Math.min(partialMatches.length, 100);
+        html += `
+            <div>
+                <div style="font-size: 12px; font-weight: 600; color: var(--sandy-brown); margin-bottom: 8px;">
+                    Can Be Made From Letters (${partialMatches.length}${partialMatches.length > 100 ? ', showing first 100' : ''})
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 200px; overflow-y: auto;">
+                    ${partialMatches.slice(0, displayCount).map(word => `
+                        <div class="suggestion-item" onclick="selectTargetWord(${stageIndex}, '${word}')" style="cursor: pointer; padding: 6px 10px; font-size: 12px;">
+                            ${word}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div>
+                <div style="font-size: 12px; font-weight: 600; color: #999; margin-bottom: 8px;">
+                    No Partial Matches
+                </div>
+            </div>
+        `;
+    }
+
+    contentDiv.innerHTML = html;
+}
+
+function selectTargetWord(stageIndex, word) {
+    const input = document.getElementById(`target-input-${stageIndex}`);
+    input.value = word;
+    updateTargetWord(stageIndex, word);
+    hideTargetSuggestions(stageIndex);
 }
 
 function clearSourceWords() {
